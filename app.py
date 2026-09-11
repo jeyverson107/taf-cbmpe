@@ -56,7 +56,7 @@ with tab1:
                 try:
                     client = genai.Client(api_key=api_key)
                     prompt = f"Extraia com precisão as exigências físicas MASCULINAS do TAF do edital: {texto_edital[:18000]}. Ignore a natação por enquanto."
-                    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                    response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
                     st.session_state['regras_taf'] = response.text
                     st.success("Metas extraídas!")
                 except Exception as e:
@@ -83,7 +83,7 @@ with tab2:
                     Foco: Prevenção de lesões (canelite), corrida fracionada (caminha/corre) e fortalecimento core/membros inferiores.
                     Metas TAF: {regras}
                     """
-                    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                    response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
                     st.session_state['treino_semanal'] = response.text
                     st.success("Plano gerado!")
                 except Exception as e:
@@ -121,5 +121,5 @@ with tab4:
                 df = pd.read_csv("historico.csv")
                 client = genai.Client(api_key=api_key)
                 prompt = f"Analise o histórico de treinos para TAF militar do candidato (IMC {imc:.1f}): {df.to_string(index=False)}. Diga onde melhorar, riscos de lesão e ajustes para a próxima semana."
-                response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt)
                 st.markdown(response.text)
