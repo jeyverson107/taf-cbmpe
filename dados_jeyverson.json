@@ -4,5 +4,13 @@
   "historico_fisico": "Sedentário atual",
   "regras_taf": "Com base **exclusivamente no trecho do edital fornecido**, as exigências físicas mencionadas são:\n\n### 1. Requisito de Altura Mínima (Itens 3.1.2 'd' e 3.1.3 'k'):\n* **Homens:** Altura mínima de **1,65m**.\n* **Mulheres:** Altura mínima de **1,60m**.\n\n### 2. Exame de Aptidão Física (Itens 3.1.1 'g' e 3.1.3 'g'):\n* É requisito geral ter aptidão física para a carreira militar, aferida mediante **exame de aptidão física** (além dos exames médicos e avaliação psicológica).\n\n---\n\n⚠️ **Nota:** O trecho fornecido é interrompido no item 4.5.1 (página 4). Portanto, a tabela com as **provas específicas do TAF** (como corrida, natação, barra fixa, abdominais, índices exigidos e tempos limites) **não consta no texto disponibilizado**. Para obter essas exigências detalhadas, seria necessário o trecho do edital referente ao capítulo específico do *Exame de Aptidão Física*.",
   "treino_semanal": "",
-  "diario": []
+  "diario": [
+    {
+      "Data": "2026-09-12",
+      "Exercício": "Corrida / Caminhada",
+      "Resultado": "5,6km em 38min",
+      "Esforço": 5,
+      "Obs": "Não senti dor, mas parei em alguns momentos e caminhei para poder recuperar o fôlego e voltar a correr."
+    }
+  ]
 }
