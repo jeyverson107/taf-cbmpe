@@ -36,13 +36,10 @@ github_token = st.secrets.get("GITHUB_TOKEN", None)
 repo_name = "jeyverson107/taf-cbmpe"
 
 # Nome do modelo isolado numa constante para facilitar a manutenção.
-# CORREÇÃO/RETIFICAÇÃO (14/09/2026): numa resposta anterior eu disse, por engano,
-# que "gemini-3.6-flash" (usado no seu código original) parecia inválido, e
-# sugeri "gemini-2.5-flash". Isso estava ERRADO — o próprio erro 404 da API do
-# Google confirmou que "gemini-2.5-flash" foi descontinuado para novos usuários
-# e que o substituto correto é "gemini-3.6-flash" (modelo da família Gemini 3,
-# lançada em dez/2025, já GA). Voltei ao valor original do seu código.
-# Se no futuro a Google trocar de novo o nome do modelo, ajuste só aqui.
+# RETIFICAÇÃO (14/09/2026): "gemini-3.6-flash" é o nome correto — é o modelo
+# GA da família Gemini 3 (lançada em dez/2025). Se a Google trocar de novo o
+# nome do modelo, ajuste só aqui. Confira sempre em
+# https://ai.google.dev/gemini-api/docs/models antes de publicar uma atualização.
 GEMINI_MODEL = "gemini-3.6-flash"
 
 
@@ -199,9 +196,14 @@ def normalizar_edital(entrada):
 
 
 def plano_padrao():
+    """Plano genérico usado apenas quando o usuário ainda não gerou um treino
+    personalizado com a IA (ver 'Gerar Treino Personalizado' na aba IA Assistente).
+    CORREÇÃO: cada exercício agora tem um campo 'tipo' ('forca', 'corrida' ou
+    'tempo') que a aba de registro usa para decidir quais campos mostrar."""
     return {
         "ciclo_id": 1,
         "criado_em": str(datetime.date.today()),
+        "gerado_por_ia": False,
         "treinos": [
             {
                 "id": 1,
@@ -209,9 +211,9 @@ def plano_padrao():
                 "concluido": False,
                 "data_conclusao": None,
                 "exercicios": [
-                    {"nome": "Barra Fixa (ou Isometria)", "series": 4, "reps": "Máximo", "detalhes": "Descanso 90s"},
-                    {"nome": "Flexão de Braço Solo", "series": 4, "reps": "30 repetições", "detalhes": "Foco na amplitude"},
-                    {"nome": "Abdominal Remador", "series": 4, "reps": "40 repetições", "detalhes": "Ritmo constante"},
+                    {"nome": "Barra Fixa (ou Isometria)", "series": 4, "reps": "Máximo", "detalhes": "Descanso 90s", "tipo": "forca"},
+                    {"nome": "Flexão de Braço Solo", "series": 4, "reps": "30 repetições", "detalhes": "Foco na amplitude", "tipo": "forca"},
+                    {"nome": "Abdominal Remador", "series": 4, "reps": "40 repetições", "detalhes": "Ritmo constante", "tipo": "forca"},
                 ],
             },
             {
@@ -220,8 +222,8 @@ def plano_padrao():
                 "concluido": False,
                 "data_conclusao": None,
                 "exercicios": [
-                    {"nome": "Aquecimento", "series": 1, "reps": "10 min", "detalhes": "Trote leve"},
-                    {"nome": "Simulado Corrida 12 min", "series": 1, "reps": "12 min", "detalhes": "Ritmo alvo (2400m+)"},
+                    {"nome": "Aquecimento", "series": 1, "reps": "10 min", "detalhes": "Trote leve", "tipo": "tempo"},
+                    {"nome": "Simulado Corrida 12 min", "series": 1, "reps": "12 min", "detalhes": "Ritmo alvo (2400m+)", "tipo": "corrida"},
                 ],
             },
             {
@@ -230,12 +232,181 @@ def plano_padrao():
                 "concluido": False,
                 "data_conclusao": None,
                 "exercicios": [
-                    {"nome": "Agachamento Livre", "series": 4, "reps": "25 reps", "detalhes": "Cadência controlada"},
-                    {"nome": "Abdominal Remador", "series": 4, "reps": "35 reps", "detalhes": "Soltar ar na subida"},
+                    {"nome": "Agachamento Livre", "series": 4, "reps": "25 reps", "detalhes": "Cadência controlada", "tipo": "forca"},
+                    {"nome": "Abdominal Remador", "series": 4, "reps": "35 reps", "detalhes": "Soltar ar na subida", "tipo": "forca"},
                 ],
             },
         ],
     }
+
+
+def resumir_exercicios(exercicios_realizados):
+    """Extrai métricas 'achatadas' (corrida_m, tempo_corrida_seg, barras,
+    flexoes) a partir da lista detalhada de exercícios registrados, para
+    manter compatibilidade com os gráficos da aba 'Minha Evolução' e com
+    registros salvos antes desta versão."""
+    resumo = {"corrida_m": None, "tempo_corrida_seg": None, "barras": None, "flexoes": None}
+    for ex in exercicios_realizados:
+        nome_lower = (ex.get("nome") or "").lower()
+        if ex.get("tipo") == "corrida":
+            resumo["corrida_m"] = ex.get("distancia_m")
+            resumo["tempo_corrida_seg"] = ex.get("tempo_seg")
+        elif "barra" in nome_lower:
+            resumo["barras"] = ex.get("reps_realizadas")
+        elif "flex" in nome_lower:
+            resumo["flexoes"] = ex.get("reps_realizadas")
+    return resumo
+
+
+def perfil_fisico_completo(perfil: dict) -> bool:
+    """Verifica se os campos mínimos do perfil físico foram preenchidos.
+    Sem isso, a IA não tem base para calibrar intensidade/progressão."""
+    if not perfil:
+        return False
+    obrigatorios = ["idade", "altura_cm", "peso_kg", "nivel_atividade"]
+    return all(perfil.get(c) not in (None, "", 0) for c in obrigatorios)
+
+
+def descrever_perfil_fisico(perfil: dict) -> str:
+    """Converte o perfil físico salvo numa frase para o prompt da IA."""
+    if not perfil:
+        return ""
+    partes = []
+    if perfil.get("idade"):
+        partes.append(f"{perfil['idade']} anos")
+    if perfil.get("sexo") and perfil["sexo"] != "Prefiro não informar":
+        partes.append(f"sexo {perfil['sexo']}")
+    if perfil.get("altura_cm") and perfil.get("peso_kg"):
+        partes.append(f"{perfil['altura_cm']:.0f}cm e {perfil['peso_kg']:.1f}kg")
+    if perfil.get("nivel_atividade"):
+        partes.append(f"nível de atividade atual: {perfil['nivel_atividade']}")
+    if perfil.get("pratica_corrida"):
+        dist = perfil.get("corrida_atual_distancia_m")
+        tempo_seg = perfil.get("corrida_atual_tempo_seg")
+        if dist and tempo_seg:
+            partes.append(f"hoje consegue correr aproximadamente {dist}m em {tempo_seg // 60} min")
+        else:
+            partes.append("já consegue correr continuamente")
+    else:
+        partes.append("ainda NÃO consegue correr continuamente sem parar (iniciante em corrida)")
+    if perfil.get("restricoes_saude"):
+        partes.append(f"restrições/lesões relatadas: {perfil['restricoes_saude']}")
+    return "Perfil físico do aluno: " + "; ".join(partes) + "."
+
+
+def gerar_treino_personalizado(descricao_taf, edital, cargo, historico_recente, perfil_fisico):
+    """Chama a IA para montar um plano semanal específico para o edital/cargo
+    ATIVO do usuário que está logado, calibrado pelo perfil físico dele.
+    Cada usuário chama esta função com o seu próprio edital/cargo/histórico/
+    perfil, então o resultado é individual por perfil. Retorna (plano, erro)."""
+    if not api_key:
+        return None, "GEMINI_API_KEY não configurada nos Secrets do Streamlit."
+
+    resumo_historico = ""
+    if historico_recente:
+        linhas = [
+            f"- {h.get('data')}: RPE {h.get('rpe')}, corrida {h.get('corrida_m')}m, "
+            f"barras {h.get('barras')}, flexões {h.get('flexoes')}"
+            for h in historico_recente
+        ]
+        resumo_historico = "Histórico recente do aluno (mais pesado = mais preparado):\n" + "\n".join(linhas)
+
+    resumo_perfil = descrever_perfil_fisico(perfil_fisico)
+
+    prompt = f"""
+    Você é um preparador físico especialista em Teste de Aptidão Física (TAF)
+    de concursos militares/policiais brasileiros. Monte um plano de treino
+    semanal de 3 dias, específico para este candidato:
+
+    Edital: {edital}
+    Cargo: {cargo}
+    Exigências oficiais do TAF para este cargo: {descricao_taf}
+
+    {resumo_perfil}
+    IMPORTANTE: calibre a intensidade, o volume (séries/repetições) e a
+    progressão de acordo com este perfil. Se o aluno for sedentário ou
+    iniciante, comece mais leve, com mais tempo de recuperação, e evolua
+    gradualmente — não monte um treino de nível avançado para quem nunca
+    treinou. Se ele ainda não consegue correr continuamente, inclua uma
+    progressão de corrida (ex.: caminhada/trote intercalado) em vez de exigir
+    logo o tempo/distância alvo do edital. Se houver restrições de saúde
+    relatadas, adapte ou substitua os exercícios que possam agravá-las e
+    inclua, no campo "detalhes" do exercício afetado, uma recomendação de
+    cautela ou de buscar orientação médica antes de executá-lo.
+
+    {resumo_historico}
+
+    Retorne ESTRITAMENTE um JSON válido (nada de texto fora do JSON), no formato:
+    {{
+      "treinos": [
+        {{
+          "dia_nome": "Dia 1 - ...",
+          "exercicios": [
+            {{"nome": "...", "series": 4, "reps": "...", "detalhes": "...", "tipo": "forca"}}
+          ]
+        }}
+      ]
+    }}
+    O campo "tipo" de cada exercício deve ser "forca" (repetições/séries),
+    "corrida" (teste de distância cronometrada) ou "tempo" (aquecimento/duração
+    livre, sem meta de distância). Gere exatamente 3 dias, coerentes com as
+    exigências do TAF e com o perfil do aluno informados acima.
+    """
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        txt_resp = response.text.strip()
+        if "```json" in txt_resp:
+            txt_resp = txt_resp.split("```json")[1].split("```")[0].strip()
+        elif "```" in txt_resp:
+            txt_resp = txt_resp.split("```")[1].split("```")[0].strip()
+
+        estrutura = json.loads(txt_resp)
+        treinos_ia = estrutura.get("treinos")
+        if not isinstance(treinos_ia, list) or not treinos_ia:
+            return None, "A IA não retornou treinos em um formato reconhecível."
+
+        treinos_formatados = []
+        for i, t in enumerate(treinos_ia, start=1):
+            exercicios = t.get("exercicios") or []
+            if not exercicios:
+                continue
+            treinos_formatados.append(
+                {
+                    "id": i,
+                    "dia_nome": t.get("dia_nome", f"Dia {i}"),
+                    "concluido": False,
+                    "data_conclusao": None,
+                    "exercicios": [
+                        {
+                            "nome": ex.get("nome", "Exercício"),
+                            "series": ex.get("series", 1),
+                            "reps": ex.get("reps", ""),
+                            "detalhes": ex.get("detalhes", ""),
+                            "tipo": ex.get("tipo", "forca"),
+                        }
+                        for ex in exercicios
+                    ],
+                }
+            )
+        if not treinos_formatados:
+            return None, "A IA retornou uma estrutura sem exercícios válidos."
+
+        return (
+            {
+                "ciclo_id": 1,
+                "criado_em": str(datetime.date.today()),
+                "gerado_por_ia": True,
+                "edital_base": edital,
+                "cargo_base": cargo,
+                "treinos": treinos_formatados,
+            },
+            None,
+        )
+    except json.JSONDecodeError:
+        return None, "A IA não retornou um JSON válido. Tente novamente."
+    except Exception as e:
+        return None, str(e)
 
 
 # =============================================================================
@@ -311,8 +482,7 @@ else:
 # Garante estrutura padrão de dados (substitui o "if 'dados' not in
 # session_state" monolítico do código original por defaults por campo — assim
 # um perfil carregado do GitHub que só tenha PARTE dos campos não quebra o app)
-dados_usuario.setdefault("peso", 80.0)
-dados_usuario.setdefault("altura", 1.75)
+dados_usuario.setdefault("perfil_fisico", {})
 dados_usuario.setdefault("edital_ativo", None)
 dados_usuario.setdefault("cargo_ativo", None)
 dados_usuario.setdefault("plano_semanal", plano_padrao())
@@ -321,6 +491,91 @@ dados_usuario.setdefault(
     "chat_ia",
     [{"role": "assistant", "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"}],
 )
+
+# -----------------------------------------------------------------------
+# PERFIL FÍSICO (idade, altura, peso, nível de atividade, restrições)
+# -----------------------------------------------------------------------
+# CORREÇÃO: o código original guardava campos soltos "peso"/"altura" sem
+# NENHUMA tela para preenchê-los, e nunca perguntava idade, nível de
+# atividade, se a pessoa já corre, ou restrições de saúde. Sem isso, a IA
+# não tinha como calibrar intensidade — ela gerava o mesmo tipo de treino
+# para um sedentário e para quem já treina pesado. Este formulário roda uma
+# vez por perfil (fica salvo) e é usado em "Gerar Treino Personalizado".
+perfil_atual = dados_usuario.get("perfil_fisico", {})
+perfil_ok = perfil_fisico_completo(perfil_atual)
+
+with st.sidebar.expander("👤 Meu Perfil Físico", expanded=not perfil_ok):
+    if not perfil_ok:
+        st.warning("Preencha para a IA conseguir montar um treino adequado ao seu nível.")
+    st.caption(
+        "Estas informações não substituem uma avaliação médica. Consulte um "
+        "profissional antes de iniciar qualquer programa de exercícios, "
+        "principalmente se tiver alguma condição de saúde preexistente."
+    )
+    with st.form("form_perfil_fisico"):
+        idade = st.number_input("Idade", min_value=14, max_value=90, value=int(perfil_atual.get("idade") or 25))
+
+        opcoes_sexo = ["Prefiro não informar", "Masculino", "Feminino"]
+        sexo = st.selectbox(
+            "Sexo (algumas bancas diferenciam a meta do TAF por sexo)",
+            opcoes_sexo,
+            index=opcoes_sexo.index(perfil_atual["sexo"]) if perfil_atual.get("sexo") in opcoes_sexo else 0,
+        )
+
+        c1, c2 = st.columns(2)
+        altura_cm = c1.number_input("Altura (cm)", min_value=100.0, max_value=230.0, value=float(perfil_atual.get("altura_cm") or 170.0), step=1.0)
+        peso_kg = c2.number_input("Peso (kg)", min_value=30.0, max_value=250.0, value=float(perfil_atual.get("peso_kg") or 75.0), step=0.5)
+
+        opcoes_nivel = [
+            "Sedentário(a) — não pratico exercícios",
+            "Iniciante — comecei a treinar há pouco tempo",
+            "Intermediário(a) — treino com regularidade",
+            "Avançado(a) — treino pesado/frequente",
+        ]
+        nivel_atividade = st.selectbox(
+            "Nível de atividade física atual",
+            opcoes_nivel,
+            index=opcoes_nivel.index(perfil_atual["nivel_atividade"]) if perfil_atual.get("nivel_atividade") in opcoes_nivel else 0,
+        )
+
+        pratica_corrida = st.checkbox(
+            "Já consigo correr sem parar por pelo menos alguns minutos",
+            value=perfil_atual.get("pratica_corrida", False),
+        )
+        c3, c4 = st.columns(2)
+        corrida_atual_m = c3.number_input(
+            "Se sim, ~quantos metros consigo correr hoje", min_value=0,
+            value=int(perfil_atual.get("corrida_atual_distancia_m") or 0), step=100,
+        )
+        corrida_atual_min = c4.number_input(
+            "Em ~quantos minutos", min_value=0,
+            value=int((perfil_atual.get("corrida_atual_tempo_seg") or 0) // 60), step=1,
+        )
+
+        restricoes = st.text_area(
+            "Lesões, dores crônicas ou restrições médicas conhecidas (opcional, mas importante)",
+            value=perfil_atual.get("restricoes_saude", ""),
+        )
+
+        salvar_perfil = st.form_submit_button("💾 Salvar Perfil Físico")
+        if salvar_perfil:
+            dados_usuario["perfil_fisico"] = {
+                "idade": idade,
+                "sexo": sexo,
+                "altura_cm": altura_cm,
+                "peso_kg": peso_kg,
+                "nivel_atividade": nivel_atividade,
+                "pratica_corrida": pratica_corrida,
+                "corrida_atual_distancia_m": corrida_atual_m or None,
+                "corrida_atual_tempo_seg": (corrida_atual_min * 60) if corrida_atual_min else None,
+                "restricoes_saude": restricoes.strip(),
+                "atualizado_em": agora_iso(),
+            }
+            novo_sha, ok = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get("sha"))
+            if ok:
+                st.session_state["sha"] = novo_sha
+                st.success("Perfil físico salvo!")
+                st.rerun()
 
 # Carrega Editais Globais do Repositório
 editais_globais, sha_editais = carregar_editais_globais()
@@ -394,11 +649,58 @@ with tab1:
         with st.form("form_treino_hoje"):
             st.markdown("### 📝 Registrar Desempenho")
             data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today())
-            rpe = st.slider("Esforço Percebido (1 a 10):", 1, 10, 7)
-            corrida_m = st.number_input("Distância na corrida (metros):", min_value=0, max_value=5000, value=2400, step=50)
-            barras = st.number_input("Repetições de Barra / Isometria (s):", min_value=0, max_value=100, value=10)
-            flexoes = st.number_input("Repetições de Flexão:", min_value=0, max_value=200, value=30)
-            obs = st.text_area("Observações (dores, tempo do circuito, etc.):")
+            rpe = st.slider("Esforço Percebido geral (1 a 10):", 1, 10, 7)
+
+            # CORREÇÃO (pontos 1, 2 e 3): antes havia 3 campos fixos (corrida,
+            # barras, flexões) para QUALQUER treino, com um teto artificial de
+            # 5000m na corrida e nenhum campo de tempo. Agora os campos são
+            # gerados dinamicamente a partir dos exercícios do treino do dia,
+            # sem limite de distância, e com tempo cronometrado para corridas.
+            st.markdown("#### Desempenho por exercício")
+            respostas_exercicios = []
+            for i, ex in enumerate(treino_pendente["exercicios"]):
+                tipo = ex.get("tipo", "forca")
+                st.markdown(f"**{ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`")
+
+                if tipo == "corrida":
+                    c1, c2, c3 = st.columns(3)
+                    distancia = c1.number_input(
+                        "Distância (m) — sem limite", min_value=0, value=2400, step=50, key=f"dist_{i}"
+                    )
+                    minutos = c2.number_input("Minutos", min_value=0, value=12, step=1, key=f"min_{i}")
+                    segundos = c3.number_input("Segundos", min_value=0, max_value=59, value=0, step=1, key=f"seg_{i}")
+                    respostas_exercicios.append(
+                        {
+                            "nome": ex["nome"],
+                            "tipo": "corrida",
+                            "distancia_m": distancia,
+                            "tempo_seg": int(minutos * 60 + segundos),
+                        }
+                    )
+                elif tipo == "tempo":
+                    duracao = st.number_input(
+                        "Duração realizada (min)", min_value=0, value=10, step=1, key=f"dur_{i}"
+                    )
+                    respostas_exercicios.append({"nome": ex["nome"], "tipo": "tempo", "duracao_min": duracao})
+                else:
+                    c1, c2 = st.columns(2)
+                    series_feitas = c1.number_input(
+                        "Séries completas", min_value=0, value=int(ex.get("series", 1)), step=1, key=f"ser_{i}"
+                    )
+                    reps_feitas = c2.number_input(
+                        "Repetições realizadas", min_value=0, value=0, step=1, key=f"reps_{i}"
+                    )
+                    respostas_exercicios.append(
+                        {
+                            "nome": ex["nome"],
+                            "tipo": "forca",
+                            "series_realizadas": series_feitas,
+                            "reps_realizadas": reps_feitas,
+                        }
+                    )
+                st.caption(f"ℹ️ {ex.get('detalhes', '')}")
+
+            obs = st.text_area("Observações gerais (dores, sensações, condições do dia, etc.):")
             marcar_concluido = st.checkbox("✅ Marcar este treino como REALIZADO para avançar o ciclo", value=False)
             btn_salvar = st.form_submit_button("💾 Salvar Registro")
 
@@ -407,16 +709,16 @@ with tab1:
                     data_str = str(data_execucao)
                     treinos[idx_pendente]["concluido"] = True
                     treinos[idx_pendente]["data_conclusao"] = data_str
+                    resumo = resumir_exercicios(respostas_exercicios)
                     hist_item = {
                         "data": data_str,
                         "edital": dados_usuario.get("edital_ativo", "Padrão"),
                         "cargo": dados_usuario.get("cargo_ativo", "Padrão"),
                         "treino": treino_pendente["dia_nome"],
                         "rpe": rpe,
-                        "corrida_m": corrida_m,
-                        "barras": barras,
-                        "flexoes": flexoes,
+                        "exercicios_realizados": respostas_exercicios,
                         "obs": obs,
+                        **resumo,
                     }
                     dados_usuario["historico_evolucoes"].append(hist_item)
                     novo_sha, ok = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get("sha"))
@@ -436,19 +738,86 @@ with tab2:
     st.header("📅 Plano Semanal Salvo")
     plano = dados_usuario.get("plano_semanal", plano_padrao())
     st.info(f"Ciclo Ativo nº {plano.get('ciclo_id', 1)} | Criado em: {plano.get('criado_em')}")
+    if plano.get("gerado_por_ia"):
+        st.success(f"🤖 Treino gerado por IA para **{plano.get('cargo_base')}** ({plano.get('edital_base')})")
+    else:
+        st.caption("Este é o treino padrão genérico. Gere um treino personalizado na aba 'IA Assistente'.")
+
     for t in plano.get("treinos", []):
         status = "✅ (Concluído)" if t.get("concluido") else "⏳ (Pendente)"
         with st.expander(f"{t['dia_nome']} — {status}"):
             if t.get("data_conclusao"):
                 st.caption(f"Realizado em: {t['data_conclusao']}")
-            st.table(pd.DataFrame(t["exercicios"]))
+            df_ex = pd.DataFrame(t["exercicios"]).reindex(columns=["nome", "series", "reps", "detalhes"])
+            st.table(df_ex)
 
 # -----------------------------------------------------------------------
 # TAB 3: IA ASSISTENTE DE PERSONALIZAÇÃO
 # -----------------------------------------------------------------------
 with tab3:
     st.header("🤖 IA Assistente TAF")
-    st.markdown("Peça para a IA incluir mini-circuitos ou fazer ajustes sem destruir seu plano mestre!")
+
+    edital_ativo = dados_usuario.get("edital_ativo")
+    cargo_ativo = dados_usuario.get("cargo_ativo")
+
+    # CORREÇÃO (ponto 4): antes, o plano de treino era sempre o genérico de
+    # plano_padrao(), independentemente do edital/cargo escolhido, e o chat
+    # da IA nunca sabia qual era o edital ativo do usuário. Cada usuário tem
+    # seu próprio edital_ativo/cargo_ativo (dados isolados por perfil), então
+    # o botão abaixo gera um treino individual, específico para QUEM está
+    # logado no momento.
+    st.subheader("🎯 Gerar Treino Personalizado com IA")
+    perfil_fisico = dados_usuario.get("perfil_fisico", {})
+    if not perfil_fisico_completo(perfil_fisico):
+        st.warning(
+            "Preencha seu **Perfil Físico** na barra lateral (idade, altura, peso e nível de "
+            "atividade) antes de gerar um treino — sem isso a IA não tem como calibrar a "
+            "intensidade certa para você."
+        )
+    elif not (edital_ativo and cargo_ativo):
+        st.info(
+            "Você ainda não tem um edital/cargo ativo. Vá até a aba "
+            "'📄 Editais & Cargos' e clique em 'Definir como Meu Cargo Ativo' "
+            "antes de gerar um treino personalizado."
+        )
+    else:
+        entrada_edital = normalizar_edital(editais_globais.get(edital_ativo, {}))
+        descricao_taf = entrada_edital.get("cargos", {}).get(cargo_ativo)
+        if not descricao_taf:
+            st.warning(
+                f"Não encontrei mais as regras de TAF para '{cargo_ativo}' em '{edital_ativo}' "
+                "no repositório de editais. Escolha o cargo novamente na aba de Editais."
+            )
+        else:
+            st.caption(f"Baseado no seu edital ativo: **{edital_ativo}**, cargo **{cargo_ativo}**")
+            st.caption(f"E no seu perfil físico: {descrever_perfil_fisico(perfil_fisico)}")
+            with st.expander("Ver as exigências de TAF usadas como base"):
+                st.info(descricao_taf)
+            st.caption(
+                "⚠️ Treino gerado por IA — não substitui avaliação médica ou de educador físico."
+            )
+
+            if st.button("⚡ Gerar Meu Treino Personalizado Agora", type="primary"):
+                if not api_key:
+                    st.error("GEMINI_API_KEY não configurada nos Secrets — não é possível gerar o treino.")
+                else:
+                    with st.spinner("Montando um plano específico para o seu edital e seu perfil..."):
+                        historico_recente = dados_usuario.get("historico_evolucoes", [])[-5:]
+                        plano_novo, erro = gerar_treino_personalizado(
+                            descricao_taf, edital_ativo, cargo_ativo, historico_recente, perfil_fisico
+                        )
+                    if erro:
+                        st.error(f"Não consegui gerar o treino: {erro}")
+                    else:
+                        dados_usuario["plano_semanal"] = plano_novo
+                        novo_sha, ok = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get("sha"))
+                        if ok:
+                            st.session_state["sha"] = novo_sha
+                            st.success("Novo treino gerado e salvo! Confira na aba '🎯 Treino de Hoje'.")
+                            st.rerun()
+
+    st.markdown("---")
+    st.markdown("Peça ajustes pontuais no treino ou tire dúvidas sobre seu edital:")
 
     chat_historico = dados_usuario.get("chat_ia", [])
     for msg in chat_historico:
@@ -466,6 +835,16 @@ with tab3:
         # "Entendido! Adicionei o ajuste solicitado..." — ou seja, confirmava uma
         # ação que nunca aconteceu. Agora, se a IA falhar, o app avisa
         # explicitamente e deixa claro que nada foi alterado.
+        # CORREÇÃO (ponto 4): o prompt agora inclui o edital/cargo ativo deste
+        # usuário específico, para a resposta ser de fato contextualizada
+        # (antes o chat respondia de forma genérica, sem saber para qual
+        # concurso o aluno estava treinando).
+        contexto = ""
+        if edital_ativo and cargo_ativo:
+            contexto = (
+                f"O aluno está se preparando para o cargo '{cargo_ativo}' do edital '{edital_ativo}'. "
+            )
+
         resposta = None
         erro_ia = None
         if api_key:
@@ -474,7 +853,7 @@ with tab3:
                 res = client.models.generate_content(
                     model=GEMINI_MODEL,
                     contents=(
-                        f"O aluno do TAF pediu: {prompt_user}. Responda objetivamente orientando "
+                        f"{contexto}O aluno do TAF pediu: {prompt_user}. Responda objetivamente orientando "
                         "como incorporar este mini-circuito ou exercício extra ao treino sem sobrecarregar."
                     ),
                 )
@@ -518,6 +897,19 @@ with tab4:
         fig_c.add_hline(y=2400, line_dash="dash", line_color="green", annotation_text="Meta TAF Padrão (2400m)")
         st.plotly_chart(fig_c, use_container_width=True)
 
+        # CORREÇÃO (ponto 2): novo gráfico de ritmo (min/km), calculado a
+        # partir do tempo de corrida que agora é registrado na Tab 1. Serve de
+        # parâmetro de evolução independente da distância (correr mais rápido
+        # no mesmo trecho também é progresso).
+        if "tempo_corrida_seg" in df_hist.columns:
+            df_ritmo = df_hist.dropna(subset=["tempo_corrida_seg", "corrida_m"]).copy()
+            df_ritmo = df_ritmo[df_ritmo["corrida_m"] > 0]
+            if not df_ritmo.empty:
+                df_ritmo["ritmo_min_km"] = (df_ritmo["tempo_corrida_seg"] / 60) / (df_ritmo["corrida_m"] / 1000)
+                st.subheader("⏱️ Ritmo da Corrida (min/km) — quanto menor, melhor")
+                fig_r = px.line(df_ritmo, x="data", y="ritmo_min_km", markers=True, title="Evolução do Ritmo")
+                st.plotly_chart(fig_r, use_container_width=True)
+
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("💪 Evolução na Barra")
@@ -530,6 +922,17 @@ with tab4:
 
         st.subheader("📋 Histórico Completo de Treinos (Ordenado)")
         st.dataframe(df_hist.sort_values(by="data", ascending=False), use_container_width=True)
+
+        # CORREÇÃO (ponto 3): detalhamento por exercício de cada treino
+        # registrado, não só o resumo (corrida/barras/flexões).
+        registros_com_detalhe = [h for h in hist if h.get("exercicios_realizados")]
+        if registros_com_detalhe:
+            st.subheader("🔍 Detalhes por Exercício, Treino a Treino")
+            for item in sorted(registros_com_detalhe, key=lambda x: x["data"], reverse=True):
+                with st.expander(f"{item['data']} — {item.get('treino', '')}"):
+                    st.table(pd.DataFrame(item["exercicios_realizados"]).reindex(
+                        columns=["nome", "tipo", "series_realizadas", "reps_realizadas", "distancia_m", "tempo_seg", "duracao_min"]
+                    ))
 
 # -----------------------------------------------------------------------
 # TAB 5: EDITAIS (BANCO COMPARTILHADO, COM ATRIBUIÇÃO E CONFIRMAÇÃO DE EXCLUSÃO)
