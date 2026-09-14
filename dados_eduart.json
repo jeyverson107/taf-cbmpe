@@ -1,0 +1,86 @@
+{
+  "peso": 80.0,
+  "altura": 1.75,
+  "edital_ativo": null,
+  "cargo_ativo": null,
+  "plano_semanal": {
+    "ciclo_id": 1,
+    "criado_em": "2026-09-14",
+    "treinos": [
+      {
+        "id": 1,
+        "dia_nome": "Dia 1 - Força e Superior (Barra & Flexão)",
+        "concluido": false,
+        "data_conclusao": null,
+        "exercicios": [
+          {
+            "nome": "Barra Fixa (ou Isometria)",
+            "series": 4,
+            "reps": "Máximo",
+            "detalhes": "Descanso 90s"
+          },
+          {
+            "nome": "Flexão de Braço Solo",
+            "series": 4,
+            "reps": "30 repetições",
+            "detalhes": "Foco na amplitude"
+          },
+          {
+            "nome": "Abdominal Remador",
+            "series": 4,
+            "reps": "40 repetições",
+            "detalhes": "Ritmo constante"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "dia_nome": "Dia 2 - Corrida de Resistência (12 min)",
+        "concluido": false,
+        "data_conclusao": null,
+        "exercicios": [
+          {
+            "nome": "Aquecimento",
+            "series": 1,
+            "reps": "10 min",
+            "detalhes": "Trote leve"
+          },
+          {
+            "nome": "Simulado Corrida 12 min",
+            "series": 1,
+            "reps": "12 min",
+            "detalhes": "Ritmo alvo (2400m+)"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "dia_nome": "Dia 3 - Pernas & Core",
+        "concluido": false,
+        "data_conclusao": null,
+        "exercicios": [
+          {
+            "nome": "Agachamento Livre",
+            "series": 4,
+            "reps": "25 reps",
+            "detalhes": "Cadência controlada"
+          },
+          {
+            "nome": "Abdominal Remador",
+            "series": 4,
+            "reps": "35 reps",
+            "detalhes": "Soltar ar na subida"
+          }
+        ]
+      }
+    ]
+  },
+  "historico_evolucoes": [],
+  "chat_ia": [
+    {
+      "role": "assistant",
+      "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"
+    }
+  ],
+  "pin_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
+}
