@@ -100,5 +100,17 @@
       "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"
     }
   ],
-  "pin_hash": "59f709983a36d35350ed715504057d4277b9854b057f27050dad5e9c31ecbcf6"
+  "pin_hash": "59f709983a36d35350ed715504057d4277b9854b057f27050dad5e9c31ecbcf6",
+  "perfil_fisico": {
+    "idade": 31,
+    "sexo": "Masculino",
+    "altura_cm": 168.0,
+    "peso_kg": 73.0,
+    "nivel_atividade": "Intermediário(a) — treino com regularidade",
+    "pratica_corrida": true,
+    "corrida_atual_distancia_m": 2000,
+    "corrida_atual_tempo_seg": 1080,
+    "restricoes_saude": "NÃO. SEM LESÕES DORES OU CONDIÇÕES MÉDICAS.",
+    "atualizado_em": "2026-09-14T11:28:57"
+  }
 }
