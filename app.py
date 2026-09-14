@@ -112,7 +112,7 @@ if st.sidebar.button("📂 Carregar Meus Dados Salvos"):
     if dados:
         st.session_state['dados'] = dados
         st.session_state['sha'] = sha
-        st.sidebar.success(f"Dados e plano de treino de '{usuario_input}' carregados!")
+        st.sidebar.success(f"Dados de '{usuario_input}' carregados!")
     else:
         st.sidebar.warning("Nenhum dado encontrado para este perfil.")
 
@@ -120,7 +120,7 @@ if 'dados' not in st.session_state:
     st.session_state['dados'] = {
         "peso": 80.0,
         "altura": 1.75,
-        "editais": {},  # Guarda múltiplos editais e cargos
+        "editais": {},
         "edital_ativo": None,
         "cargo_ativo": None,
         "plano_semanal": plano_padrao(),
@@ -136,7 +136,6 @@ if st.sidebar.button("💾 Salvar Tudo na Nuvem"):
         st.session_state['sha'] = sha
     st.sidebar.success("Tudo salvo com sucesso no GitHub!")
 
-# Exibição do Edital/Cargo Ativo na barra lateral
 if dados_usuario.get("edital_ativo") and dados_usuario.get("cargo_ativo"):
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**📌 Concurso Ativo:** {dados_usuario['edital_ativo']}")
@@ -155,7 +154,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📄 Editais & Cargos"
 ])
 
-# TAB 1: TREINO DE HOJE (PENDENTE E CONTROLE DE CICLO)
+# TAB 1: TREINO DE HOJE (COM REGISTRO RETROATIVO DE DATA)
 with tab1:
     st.header("🎯 Treino de Hoje & Progresso do Ciclo")
     plano = dados_usuario.get("plano_semanal")
@@ -196,6 +195,10 @@ with tab1:
         st.markdown("---")
         with st.form("form_treino_hoje"):
             st.markdown("### 📝 Registrar Desempenho")
+            
+            # Campo de Seleção de Data (Permite registrar treinos passados)
+            data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today())
+            
             rpe = st.slider("Esforço Percebido (1 a 10):", 1, 10, 7)
             corrida_m = st.number_input("Distância na corrida (metros):", min_value=0, max_value=5000, value=2400, step=50)
             barras = st.number_input("Repetições de Barra / Isometria (s):", min_value=0, max_value=100, value=10)
@@ -207,11 +210,12 @@ with tab1:
 
             if btn_salvar:
                 if marcar_concluido:
+                    data_str = str(data_execucao)
                     treinos[idx_pendente]["concluido"] = True
-                    treinos[idx_pendente]["data_conclusao"] = str(datetime.date.today())
+                    treinos[idx_pendente]["data_conclusao"] = data_str
 
                     hist_item = {
-                        "data": str(datetime.date.today()),
+                        "data": data_str,
                         "edital": dados_usuario.get("edital_ativo", "Padrão"),
                         "cargo": dados_usuario.get("cargo_ativo", "Padrão"),
                         "treino": treino_pendente["dia_nome"],
@@ -228,7 +232,7 @@ with tab1:
                     sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
                     if sha:
                         st.session_state['sha'] = sha
-                    st.success("Treino concluído com sucesso! Próximo treino liberado.")
+                    st.success(f"Treino gravado com sucesso para a data {data_str}! Próximo treino liberado.")
                     st.rerun()
                 else:
                     st.warning("Marque a caixinha de verificação para concluir o treino.")
@@ -281,7 +285,7 @@ with tab3:
         dados_usuario["chat_ia"] = chat_historico
         salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
 
-# TAB 4: GRÁFICOS E EVOLUÇÃO (PRESERVA O HISTÓRICO GLOBAL)
+# TAB 4: GRÁFICOS E EVOLUÇÃO (ORDENADO POR DATA)
 with tab4:
     st.header("📊 Minha Evolução")
     hist = dados_usuario.get("historico_evolucoes", [])
@@ -290,6 +294,7 @@ with tab4:
     else:
         df_hist = pd.DataFrame(hist)
         df_hist["data"] = pd.to_datetime(df_hist["data"])
+        df_hist = df_hist.sort_values(by="data", ascending=True)
 
         st.subheader("📈 Progresso na Corrida (Metros)")
         fig_c = px.line(df_hist, x="data", y="corrida_m", markers=True, title="Metragem Corrida 12 min", color=df_hist.get("edital", None))
@@ -306,7 +311,7 @@ with tab4:
             fig_f = px.bar(df_hist, x="data", y="flexoes", title="Repetições de Flexão")
             st.plotly_chart(fig_f, use_container_width=True)
 
-        st.subheader("📋 Histórico Completo de Treinos (Todos os Editais)")
+        st.subheader("📋 Histórico Completo de Treinos (Ordenado)")
         st.dataframe(df_hist.sort_values(by="data", ascending=False), use_container_width=True)
 
 # TAB 5: UPLOAD DE EDITAL, MULTI-CARGOS E TROCA DE CONCURSO
@@ -378,7 +383,6 @@ with tab5:
             dados_usuario["edital_ativo"] = edital_sel
             dados_usuario["cargo_ativo"] = cargo_sel
 
-            # Notifica que o histórico de treinos NÃO é apagado
             sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
             if sha:
                 st.session_state['sha'] = sha
