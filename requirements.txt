@@ -1,6 +1,6 @@
 streamlit
-pypdf
-pandas
 requests
-google-genai
+pandas
 plotly
+pypdf
+google-genai
