@@ -208,6 +208,14 @@
     {
       "role": "assistant",
       "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"
+    },
+    {
+      "role": "user",
+      "content": "Eu consigo conversar com você aqui?"
+    },
+    {
+      "role": "assistant",
+      "content": "Sim, você pode conversar diretamente comigo por aqui! Estou à disposição para te guiar na preparação para o TAF de 2º Tenente do CBMPE.\n\nPara incorporar um **mini-circuito ou exercício extra** na sua rotina sem gerar sobrecarga ou lesões, siga estas orientações objetivas:\n\n1. **Momento certo:** Faça o mini-circuito **ao final** do treino principal ou em dias de recuperação ativa. Nunca o faça antes dos treinos específicos do TAF (corrida, barra, abdômen, natação) para não pré-fatigar a musculatura.\n2. **Volume reduzido (10 a 15 min):** Faça de **2 a 3 séries** no máximo. O extra serve para lapidar pontos fracos, não para exaurir o corpo.\n3. **Frequência:** Insira esse estímulo extra apenas **2 a 3 vezes por semana**, com pelo menos 24h a 48h de descanso para os mesmos grupos musculares.\n4. **Foco estratégico:** Use esse circuito para fortalecer músculos estabilizadores e focar nas suas maiores dificuldades do edital do CBMPE (ex: fortalecer *core*, pegada para a barra fixa ou mobilidade).\n5. **Controle de intensidade:** Não vá até a falha neuromuscular no treino extra. Se notar queda de rendimento nos treinos principais ou dores articulares, corte o mini-circuito temporariamente.\n\n**Como posso te ajudar agora?** Me diga qual é o exercício extra que você quer incluir ou qual teste do CBMPE você precisa melhorar no momento."
     }
   ],
   "pin_hash": "59f709983a36d35350ed715504057d4277b9854b057f27050dad5e9c31ecbcf6",
