@@ -62,6 +62,33 @@ def salvar_dados_github(usuario, dados, sha=None):
         return r.json()["content"]["sha"]
     return sha
 
+# PERSISTÊNCIA COMPARTILHADA DE EDITAIS
+def carregar_editais_globais():
+    if not github_token:
+        return {}, None
+    url = f"https://api.github.com/repos/{repo_name}/contents/editais_globais.json"
+    headers = {"Authorization": f"Bearer {github_token}"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        res = r.json()
+        conteudo = base64.b64decode(res["content"]).decode("utf-8")
+        return json.loads(conteudo), res["sha"]
+    return {}, None
+
+def salvar_editais_globais(editais, sha=None):
+    if not github_token:
+        return sha
+    url = f"https://api.github.com/repos/{repo_name}/contents/editais_globais.json"
+    headers = {"Authorization": f"Bearer {github_token}"}
+    conteudo_b64 = base64.b64encode(json.dumps(editais, ensure_ascii=False, indent=2).encode("utf-8")).decode("utf-8")
+    payload = {"message": "Atualiza repositório global de editais", "content": conteudo_b64}
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(url, headers=headers, json=payload)
+    if r.status_code in [200, 201]:
+        return r.json()["content"]["sha"]
+    return sha
+
 def plano_padrao():
     return {
         "ciclo_id": 1,
@@ -120,7 +147,6 @@ if 'dados' not in st.session_state:
     st.session_state['dados'] = {
         "peso": 80.0,
         "altura": 1.75,
-        "editais": {},
         "edital_ativo": None,
         "cargo_ativo": None,
         "plano_semanal": plano_padrao(),
@@ -129,6 +155,11 @@ if 'dados' not in st.session_state:
     }
 
 dados_usuario = st.session_state['dados']
+
+# Carrega Editais Globais do Repositório
+editais_globais, sha_editais = carregar_editais_globais()
+st.session_state['editais_globais'] = editais_globais
+st.session_state['sha_editais'] = sha_editais
 
 if st.sidebar.button("💾 Salvar Tudo na Nuvem"):
     sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
@@ -154,7 +185,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📄 Editais & Cargos"
 ])
 
-# TAB 1: TREINO DE HOJE (COM REGISTRO RETROATIVO DE DATA)
+# TAB 1: TREINO DE HOJE
 with tab1:
     st.header("🎯 Treino de Hoje & Progresso do Ciclo")
     plano = dados_usuario.get("plano_semanal")
@@ -196,9 +227,7 @@ with tab1:
         with st.form("form_treino_hoje"):
             st.markdown("### 📝 Registrar Desempenho")
             
-            # Campo de Seleção de Data (Permite registrar treinos passados)
             data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today())
-            
             rpe = st.slider("Esforço Percebido (1 a 10):", 1, 10, 7)
             corrida_m = st.number_input("Distância na corrida (metros):", min_value=0, max_value=5000, value=2400, step=50)
             barras = st.number_input("Repetições de Barra / Isometria (s):", min_value=0, max_value=100, value=10)
@@ -285,7 +314,7 @@ with tab3:
         dados_usuario["chat_ia"] = chat_historico
         salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
 
-# TAB 4: GRÁFICOS E EVOLUÇÃO (ORDENADO POR DATA)
+# TAB 4: GRÁFICOS E EVOLUÇÃO
 with tab4:
     st.header("📊 Minha Evolução")
     hist = dados_usuario.get("historico_evolucoes", [])
@@ -314,16 +343,16 @@ with tab4:
         st.subheader("📋 Histórico Completo de Treinos (Ordenado)")
         st.dataframe(df_hist.sort_values(by="data", ascending=False), use_container_width=True)
 
-# TAB 5: UPLOAD DE EDITAL, MULTI-CARGOS E TROCA DE CONCURSO
+# TAB 5: UPLOAD DE EDITAL (BANCO COMPARTILHADO, SUBSTITUIÇÃO E EXCLUSÃO)
 with tab5:
-    st.header("📄 Leitura de Edital & Escolha de Cargo")
-    st.markdown("Faça upload de editais (ex: CBMPE, PCPE) para extrair os cargos e definir quais regras seguir.")
+    st.header("📄 Repositório de Editais Compartilhados")
+    st.markdown("Adicione ou atualize um edital. Editais cadastrados por qualquer usuário ficam disponíveis para todos!")
 
-    nome_edital_input = st.text_input("Nome/Sigla do Concurso (ex: CBMPE, PCPE):", value="CBMPE").strip().upper()
-    uploaded_pdf = st.file_uploader(f"Upload do PDF do Edital ({nome_edital_input}):", type=["pdf"])
+    nome_edital_input = st.text_input("Nome/Sigla do Concurso (ex: CBMPE, PCPE, PMPE):", value="CBMPE").strip().upper()
+    uploaded_pdf = st.file_uploader(f"Upload/Substituição do PDF ({nome_edital_input}):", type=["pdf"])
 
-    if uploaded_pdf and api_key and st.button("🔍 Mapear Cargos e Exigências do Edital"):
-        with st.spinner("Escaneando PDF e identificando cargos com a IA..."):
+    if uploaded_pdf and api_key and st.button("🔍 Processar / Substituir Edital"):
+        with st.spinner("Escaneando PDF e atualizando banco global de editais..."):
             try:
                 reader = pypdf.PdfReader(uploaded_pdf)
                 texto_completo = "".join([p.extract_text() or "" for p in reader.pages])
@@ -351,40 +380,50 @@ with tab5:
 
                 cargos_mapeados = json.loads(txt_resp)
 
-                if "editais" not in dados_usuario:
-                    dados_usuario["editais"] = {}
+                # Atualiza repositório global
+                editais_globais[nome_edital_input] = cargos_mapeados
+                sha_ed = salvar_editais_globais(editais_globais, st.session_state.get('sha_editais'))
+                if sha_ed:
+                    st.session_state['sha_editais'] = sha_ed
 
-                dados_usuario["editais"][nome_edital_input] = cargos_mapeados
-                sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
-                if sha:
-                    st.session_state['sha'] = sha
-                st.success(f"Edital {nome_edital_input} processado! Cargos identificados com sucesso.")
+                st.success(f"Edital '{nome_edital_input}' salvo/substituído no banco global com sucesso!")
                 st.rerun()
 
             except Exception as e:
-                st.error(f"Erro ao processar o edital: {e}. Tente novamente ou insira os dados manualmente.")
+                st.error(f"Erro ao processar o edital: {e}. Tente novamente.")
 
     st.markdown("---")
-    st.subheader("🎯 Seleção de Edital e Cargo para Treino")
+    st.subheader("🎯 Escolha do Edital & Cargo para Treino")
 
-    editais_salvos = dados_usuario.get("editais", {})
-
-    if not editais_salvos:
-        st.info("Nenhum edital cadastrado no seu perfil ainda. Faça o upload de um PDF acima!")
+    if not editais_globais:
+        st.info("Nenhum edital cadastrado no repositório ainda. Faça o upload do primeiro PDF acima!")
     else:
-        edital_sel = st.selectbox("Escolha o Edital/Concurso:", list(editais_salvos.keys()))
-        cargos_disponiveis = list(editais_salvos[edital_sel].keys())
+        lista_editais = list(editais_globais.keys())
+        edital_sel = st.selectbox("Escolha o Edital/Concurso:", lista_editais)
+
+        cargos_disponiveis = list(editais_globais[edital_sel].keys())
         cargo_sel = st.selectbox("Escolha o Cargo:", cargos_disponiveis)
 
-        st.markdown(f"### 📌 Regras do TAF para {cargo_sel} ({edital_sel}):")
-        st.info(editais_salvos[edital_sel][cargo_sel])
+        st.markdown(f"### 📌 Regras do TAF para **{cargo_sel}** ({edital_sel}):")
+        st.info(editais_globais[edital_sel][cargo_sel])
 
-        if st.button("🚀 Definir como Cargo Ativo (Manter Meu Histórico Físico)"):
-            dados_usuario["edital_ativo"] = edital_sel
-            dados_usuario["cargo_ativo"] = cargo_sel
+        col_atv, col_del = st.columns([3, 1])
+        with col_atv:
+            if st.button("🚀 Definir como Meu Cargo Ativo"):
+                dados_usuario["edital_ativo"] = edital_sel
+                dados_usuario["cargo_ativo"] = cargo_sel
 
-            sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
-            if sha:
-                st.session_state['sha'] = sha
-            st.success(f"Cargo '{cargo_sel}' do concurso '{edital_sel}' ativado! Seu histórico de treino continuou intacto.")
-            st.rerun()
+                sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
+                if sha:
+                    st.session_state['sha'] = sha
+                st.success(f"Cargo '{cargo_sel}' ({edital_sel}) ativado no seu perfil!")
+                st.rerun()
+
+        with col_del:
+            if st.button(f"🗑️ Excluir Edital '{edital_sel}'"):
+                del editais_globais[edital_sel]
+                sha_ed = salvar_editais_globais(editais_globais, st.session_state.get('sha_editais'))
+                if sha_ed:
+                    st.session_state['sha_editais'] = sha_ed
+                st.success(f"Edital {edital_sel} excluído do repositório!")
+                st.rerun()
