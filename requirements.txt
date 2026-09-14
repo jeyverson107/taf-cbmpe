@@ -1,4 +1,6 @@
 streamlit
 pypdf
 pandas
+requests
 google-genai
+plotly
