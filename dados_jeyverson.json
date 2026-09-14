@@ -92,5 +92,13 @@
     }
   },
   "edital_ativo": "CBMPE",
-  "cargo_ativo": "2º Tenente"
+  "cargo_ativo": "2º Tenente",
+  "historico_evolucoes": [],
+  "chat_ia": [
+    {
+      "role": "assistant",
+      "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"
+    }
+  ],
+  "pin_hash": "59f709983a36d35350ed715504057d4277b9854b057f27050dad5e9c31ecbcf6"
 }
