@@ -1,8 +1,8 @@
 {
   "peso": 80.0,
   "altura": 1.75,
-  "edital_ativo": null,
-  "cargo_ativo": null,
+  "edital_ativo": "PCPE",
+  "cargo_ativo": "Agente de Polícia",
   "plano_semanal": {
     "ciclo_id": 1,
     "criado_em": "2026-09-14",
