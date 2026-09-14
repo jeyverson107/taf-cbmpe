@@ -82,5 +82,17 @@
       "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"
     }
   ],
-  "pin_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"
+  "pin_hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+  "perfil_fisico": {
+    "idade": 34,
+    "sexo": "Masculino",
+    "altura_cm": 178.0,
+    "peso_kg": 75.0,
+    "nivel_atividade": "Iniciante — comecei a treinar há pouco tempo",
+    "pratica_corrida": true,
+    "corrida_atual_distancia_m": 1000,
+    "corrida_atual_tempo_seg": 480,
+    "restricoes_saude": "DOR NO JOELHO ESQUERDOPROXIMO Á RÓTULA DO LADO INTERNO DA PERNA",
+    "atualizado_em": "2026-09-14T11:36:02"
+  }
 }
