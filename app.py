@@ -5,6 +5,7 @@ import requests
 import datetime
 import pandas as pd
 import plotly.express as px
+import pypdf
 from google import genai
 
 # Configuração de Página e Ícone PWA/Mobile
@@ -111,7 +112,7 @@ if st.sidebar.button("📂 Carregar Meus Dados Salvos"):
     if dados:
         st.session_state['dados'] = dados
         st.session_state['sha'] = sha
-        st.sidebar.success("Dados e plano de treino carregados!")
+        st.sidebar.success(f"Dados e plano de treino de '{usuario_input}' carregados!")
     else:
         st.sidebar.warning("Nenhum dado encontrado para este perfil.")
 
@@ -119,10 +120,12 @@ if 'dados' not in st.session_state:
     st.session_state['dados'] = {
         "peso": 80.0,
         "altura": 1.75,
-        "regras_taf": "",
+        "editais": {},  # Guarda múltiplos editais e cargos
+        "edital_ativo": None,
+        "cargo_ativo": None,
         "plano_semanal": plano_padrao(),
         "historico_evolucoes": [],
-        "chat_ia": [{"role": "assistant", "content": "Olá! Sou seu Assistente TAF IA. Diga-me se deseja adaptar treinos ou incluir mini-circuitos!"}]
+        "chat_ia": [{"role": "assistant", "content": "Olá! Sou seu Assistente TAF IA. Posso ajudar você a adaptar seu treino ou sanar dúvidas sobre seu edital!"}]
     }
 
 dados_usuario = st.session_state['dados']
@@ -132,6 +135,12 @@ if st.sidebar.button("💾 Salvar Tudo na Nuvem"):
     if sha:
         st.session_state['sha'] = sha
     st.sidebar.success("Tudo salvo com sucesso no GitHub!")
+
+# Exibição do Edital/Cargo Ativo na barra lateral
+if dados_usuario.get("edital_ativo") and dados_usuario.get("cargo_ativo"):
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**📌 Concurso Ativo:** {dados_usuario['edital_ativo']}")
+    st.sidebar.markdown(f"**🎯 Cargo:** {dados_usuario['cargo_ativo']}")
 
 # -----------------------------------------------------------------------------
 # NAVEGAÇÃO PRINCIPAL
@@ -143,7 +152,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📅 Cronograma Semanal",
     "🤖 IA Assistente",
     "📊 Minha Evolução",
-    "📄 Edital & Metas"
+    "📄 Editais & Cargos"
 ])
 
 # TAB 1: TREINO DE HOJE (PENDENTE E CONTROLE DE CICLO)
@@ -203,6 +212,8 @@ with tab1:
 
                     hist_item = {
                         "data": str(datetime.date.today()),
+                        "edital": dados_usuario.get("edital_ativo", "Padrão"),
+                        "cargo": dados_usuario.get("cargo_ativo", "Padrão"),
                         "treino": treino_pendente["dia_nome"],
                         "rpe": rpe,
                         "corrida_m": corrida_m,
@@ -270,7 +281,7 @@ with tab3:
         dados_usuario["chat_ia"] = chat_historico
         salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
 
-# TAB 4: GRÁFICOS E EVOLUÇÃO
+# TAB 4: GRÁFICOS E EVOLUÇÃO (PRESERVA O HISTÓRICO GLOBAL)
 with tab4:
     st.header("📊 Minha Evolução")
     hist = dados_usuario.get("historico_evolucoes", [])
@@ -281,8 +292,8 @@ with tab4:
         df_hist["data"] = pd.to_datetime(df_hist["data"])
 
         st.subheader("📈 Progresso na Corrida (Metros)")
-        fig_c = px.line(df_hist, x="data", y="corrida_m", markers=True, title="Metragem Corrida 12 min")
-        fig_c.add_hline(y=2400, line_dash="dash", line_color="green", annotation_text="Meta TAF (2400m)")
+        fig_c = px.line(df_hist, x="data", y="corrida_m", markers=True, title="Metragem Corrida 12 min", color=df_hist.get("edital", None))
+        fig_c.add_hline(y=2400, line_dash="dash", line_color="green", annotation_text="Meta TAF Padrão (2400m)")
         st.plotly_chart(fig_c, use_container_width=True)
 
         col1, col2 = st.columns(2)
@@ -295,13 +306,81 @@ with tab4:
             fig_f = px.bar(df_hist, x="data", y="flexoes", title="Repetições de Flexão")
             st.plotly_chart(fig_f, use_container_width=True)
 
-        st.subheader("📋 Histórico Completo")
+        st.subheader("📋 Histórico Completo de Treinos (Todos os Editais)")
         st.dataframe(df_hist.sort_values(by="data", ascending=False), use_container_width=True)
 
-# TAB 5: EDITAL E REGRAS
+# TAB 5: UPLOAD DE EDITAL, MULTI-CARGOS E TROCA DE CONCURSO
 with tab5:
-    st.header("📄 Regras do Edital Salvas")
-    if dados_usuario.get("regras_taf"):
-        st.markdown(dados_usuario["regras_taf"])
+    st.header("📄 Leitura de Edital & Escolha de Cargo")
+    st.markdown("Faça upload de editais (ex: CBMPE, PCPE) para extrair os cargos e definir quais regras seguir.")
+
+    nome_edital_input = st.text_input("Nome/Sigla do Concurso (ex: CBMPE, PCPE):", value="CBMPE").strip().upper()
+    uploaded_pdf = st.file_uploader(f"Upload do PDF do Edital ({nome_edital_input}):", type=["pdf"])
+
+    if uploaded_pdf and api_key and st.button("🔍 Mapear Cargos e Exigências do Edital"):
+        with st.spinner("Escaneando PDF e identificando cargos com a IA..."):
+            try:
+                reader = pypdf.PdfReader(uploaded_pdf)
+                texto_completo = "".join([p.extract_text() or "" for p in reader.pages])
+
+                client = genai.Client(api_key=api_key)
+                prompt_analise = f"""
+                Analise o edital a seguir e extraia as exigências do TAF organizadas por cargo.
+                Retorne ESTRITAMENTE um JSON válido no seguinte formato:
+                {{
+                   "CARGO_1": "Descrição das metas do TAF do cargo 1",
+                   "CARGO_2": "Descrição das metas do TAF do cargo 2"
+                }}
+                Substitua CARGO_1, CARGO_2 pelos nomes reais dos cargos encontrados (ex: 'Soldado', '2º Tenente').
+                
+                Texto do Edital:
+                {texto_completo[:25000]}
+                """
+                response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt_analise)
+                
+                txt_resp = response.text.strip()
+                if "```json" in txt_resp:
+                    txt_resp = txt_resp.split("```json")[1].split("```")[0].strip()
+                elif "```" in txt_resp:
+                    txt_resp = txt_resp.split("```")[1].split("```")[0].strip()
+
+                cargos_mapeados = json.loads(txt_resp)
+
+                if "editais" not in dados_usuario:
+                    dados_usuario["editais"] = {}
+
+                dados_usuario["editais"][nome_edital_input] = cargos_mapeados
+                sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
+                if sha:
+                    st.session_state['sha'] = sha
+                st.success(f"Edital {nome_edital_input} processado! Cargos identificados com sucesso.")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Erro ao processar o edital: {e}. Tente novamente ou insira os dados manualmente.")
+
+    st.markdown("---")
+    st.subheader("🎯 Seleção de Edital e Cargo para Treino")
+
+    editais_salvos = dados_usuario.get("editais", {})
+
+    if not editais_salvos:
+        st.info("Nenhum edital cadastrado no seu perfil ainda. Faça o upload de um PDF acima!")
     else:
-        st.warning("Nenhum edital cadastrado ainda.")
+        edital_sel = st.selectbox("Escolha o Edital/Concurso:", list(editais_salvos.keys()))
+        cargos_disponiveis = list(editais_salvos[edital_sel].keys())
+        cargo_sel = st.selectbox("Escolha o Cargo:", cargos_disponiveis)
+
+        st.markdown(f"### 📌 Regras do TAF para {cargo_sel} ({edital_sel}):")
+        st.info(editais_salvos[edital_sel][cargo_sel])
+
+        if st.button("🚀 Definir como Cargo Ativo (Manter Meu Histórico Físico)"):
+            dados_usuario["edital_ativo"] = edital_sel
+            dados_usuario["cargo_ativo"] = cargo_sel
+
+            # Notifica que o histórico de treinos NÃO é apagado
+            sha = salvar_dados_github(usuario_input, dados_usuario, st.session_state.get('sha'))
+            if sha:
+                st.session_state['sha'] = sha
+            st.success(f"Cargo '{cargo_sel}' do concurso '{edital_sel}' ativado! Seu histórico de treino continuou intacto.")
+            st.rerun()
