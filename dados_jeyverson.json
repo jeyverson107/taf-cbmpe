@@ -22,50 +22,50 @@
     "treinos": [
       {
         "id": 1,
-        "dia_nome": "Dia 1 - Força Superior e Treino Intervalado de Velocidade",
-        "concluido": true,
-        "data_conclusao": "2026-09-13",
+        "dia_nome": "Dia 1 - Membros Superiores (Força Inicial) e Corrida Intervalada",
+        "concluido": false,
+        "data_conclusao": null,
         "exercicios": [
           {
-            "nome": "Aquecimento Mobilidade e Trotinho",
+            "nome": "Aquecimento Geral e Mobilidade Articular",
             "series": 1,
-            "reps": "8 a 10 minutos",
-            "detalhes": "Elevação da frequência cardíaca e lubrificação articular antes dos exercícios específicos.",
+            "reps": "10 minutos",
+            "detalhes": "Trote leve intercalado com polichinelos e rotação de ombros/escápulas.",
             "tipo": "tempo"
           },
           {
-            "nome": "Barra Fixa Pronada",
+            "nome": "Barra Fixa - Fase Negativa (Excêntrica)",
             "series": 4,
-            "reps": "4 a 6 repetições",
-            "detalhes": "Pegada em pronação (palmas para fora). Execução completa: queixo ultrapassa a barra e cotovelos estendem na descida.",
+            "reps": "3 a 5 reps",
+            "detalhes": "Utilize um banco para subir até o queixo passar a barra e desça controlando o peso o mais lento possível (4 a 5 segundos de descida).",
             "tipo": "forca"
           },
           {
-            "nome": "Flexão de Braço no Solo (Padrão TAF)",
+            "nome": "Flexão de Braço (Inclinada ou Joelhos no Chão)",
             "series": 4,
-            "reps": "15 a 20 repetições",
-            "detalhes": "Manter corpo alinhado. Descer até o peito quase tocar o solo e estender totalmente os cotovelos.",
+            "reps": "8 a 12 reps",
+            "detalhes": "Foque no controle do tronco e amplitude completa (peito próximo ao solo/banco). Mantenha abdômen e glúteos contraídos.",
             "tipo": "forca"
           },
           {
-            "nome": "Abdominal Remador",
+            "nome": "Abdominal Remador (Padrão TAF)",
             "series": 4,
-            "reps": "20 a 25 repetições",
-            "detalhes": "Estender completamente corpo e braços acima da cabeça no chão; flexionar o tronco abraçando os joelhos na subida.",
+            "reps": "15 a 20 reps",
+            "detalhes": "Estenda o corpo completamente e suba flexionando joelhos e tronco simultaneamente, abraçando os joelhos/canelas.",
             "tipo": "forca"
           },
           {
-            "nome": "Tiros de Corrida Intervalada (Pace TAF)",
+            "nome": "Corrida Intervalada (Tiros de 400m)",
             "series": 5,
-            "reps": "400 metros",
-            "detalhes": "Correr 400m em ritmo forte (meta de 2min a 2min10s por tiro), intercalando com 1min30s de caminhada leve de recuperação.",
+            "reps": "400m por série",
+            "detalhes": "Corra 400m em ritmo forte (aproximadamente 2min a 2min10s) e recupere com 1min30s de caminhada leve entre cada tiro.",
             "tipo": "corrida"
           }
         ]
       },
       {
         "id": 2,
-        "dia_nome": "Dia 2 - Fortalecimento de Membros Inferiores, Core e Rodagem Aeróbica",
+        "dia_nome": "Dia 2 - Tracção, Estabilidade de Core e Corrida de Ritmo",
         "concluido": false,
         "data_conclusao": null,
         "exercicios": [
@@ -73,78 +73,78 @@
             "nome": "Aquecimento Dinâmico",
             "series": 1,
             "reps": "8 minutos",
-            "detalhes": "Polichinelos, rotação de quadril e agachamentos sem peso.",
+            "detalhes": "Elevação de joelhos, corrida de costas e mobilidade de quadril.",
             "tipo": "tempo"
           },
           {
-            "nome": "Agachamento Livre",
+            "nome": "Remada Australiana (Barra Baixa)",
             "series": 4,
-            "reps": "15 a 20 repetições",
-            "detalhes": "Foco na amplitude (amplitude de 90 graus ou mais) e fortalecimento de quadríceps e glúteos para a corrida.",
+            "reps": "10 a 12 reps",
+            "detalhes": "Corpo inclinado e alinhado em prancha. Puxe o peito até a barra focando em espremer as escápulas.",
             "tipo": "forca"
           },
           {
-            "nome": "Afundo Dinâmico",
-            "series": 3,
-            "reps": "12 repetições por perna",
-            "detalhes": "Passadas à frente alternadas com boa estabilidade de joelhos e tronco ereto.",
+            "nome": "Flexão de Braço Solo (Padrão Militar)",
+            "series": 4,
+            "reps": "Máximo de reps com boa forma",
+            "detalhes": "Tente executar repetições completas no chão. Pare a série assim que perder o alinhamento do quadril.",
             "tipo": "forca"
           },
           {
-            "nome": "Prancha Abdominal Isométrica",
+            "nome": "Prancha Abdominal Ventral",
             "series": 3,
-            "reps": "45 a 60 segundos",
-            "detalhes": "Estabilização do core para sustentação da postura durante a corrida intensa.",
-            "tipo": "tempo"
+            "reps": "45 segundos",
+            "detalhes": "Sustentação isométrica mantendo o alinhamento da coluna e quadril estabilizado.",
+            "tipo": "forca"
           },
           {
-            "nome": "Corrida Contínua de Rodagem (Base Aeróbica)",
+            "nome": "Corrida Contínua de Ritmo (Tempo Run)",
             "series": 1,
-            "reps": "3000 metros",
-            "detalhes": "Manter um ritmo contínuo confortável sem parar para caminhar (trote ajustado para desenvolver resistência).",
+            "reps": "2500m",
+            "detalhes": "Corrida contínua sem pausa em ritmo moderado constante, buscando fechar a distância abaixo de 17 minutos.",
             "tipo": "corrida"
           }
         ]
       },
       {
         "id": 3,
-        "dia_nome": "Dia 3 - Simulado de Potência Muscular e Teste de Corrida 12 Minutos",
+        "dia_nome": "Dia 3 - Isometria, Volume e Simulado de Corrida TAF",
         "concluido": false,
         "data_conclusao": null,
         "exercicios": [
           {
-            "nome": "Aquecimento Geral e Preparativo",
+            "nome": "Aquecimento Específico",
             "series": 1,
             "reps": "10 minutos",
-            "detalhes": "Trote leve e educativos de corrida (skipping alto/baixo, anfersen).",
+            "detalhes": "Trote leve e educativos de corrida (skipping baixo, anfersen).",
             "tipo": "tempo"
           },
           {
-            "nome": "Barra Fixa - Série Máxima TAF",
-            "series": 3,
-            "reps": "Máximo de repetições",
-            "detalhes": "Simulação de edital: executar até a falha com boa forma. Descanso de 2 minutos entre séries.",
+            "nome": "Barra Fixa Isométrica (Sustentação)",
+            "series": 4,
+            "reps": "10 a 15 segundos",
+            "detalhes": "Com ajuda de um salto/banco, posicione o queixo acima da barra e segure o máximo de tempo na posição superior.",
             "tipo": "forca"
           },
           {
-            "nome": "Flexão de Braço (Rítmica TAF)",
-            "series": 3,
-            "reps": "Máximo em 1 minuto",
-            "detalhes": "Executar a maior quantidade de repetições válidas no tempo de 1 minuto.",
+            "nome": "Flexão de Braço (Séries Acumulativas)",
+            "series": 5,
+            "reps": "6 a 8 reps",
+            "detalhes": "Acúmulo de volume técnico. Descanse 60 segundos entre as séries garantindo execuções perfeitas.",
             "tipo": "forca"
           },
           {
-            "nome": "Abdominal Remador (Rítmico TAF)",
+            "nome": "Abdominal Remador Cronometrado",
             "series": 3,
-            "reps": "Máximo em 1 minuto",
-            "detalhes": "Manter cadência alta com amplitude completa para pontuação máxima.",
+            "reps": "1 minuto por série",
+            "detalhes": "Realize o maior número de repetições corretas dentro de 1 minuto. Descanse 1min30s entre as séries.",
             "tipo": "forca"
           },
           {
-            "nome": "Teste / Simulado de Corrida dos 12 Minutos",
+            "nome": "Simulado TAF - Teste dos 12 Minutos",
             "series": 1,
-            "reps": "Meta: buscar o máximo de distância em 12 min (meta > 2100m)",
-            "detalhes": "Correr de forma regular nos 12 minutos buscando ultrapassar os 2000m atuais e aproximar-se da meta do CBMPE (2400m).",
+            "reps": "12 minutos",
+            "detalhes": "Percorra a maior distância possível em 12 minutos. Meta atual: Ultrapassar 2100m e evoluir gradativamente para os 2400m.",
             "tipo": "corrida"
           }
         ]
