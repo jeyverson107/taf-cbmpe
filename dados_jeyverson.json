@@ -23,8 +23,8 @@
       {
         "id": 1,
         "dia_nome": "Dia 1 - Força Superior e Treino Intervalado de Velocidade",
-        "concluido": false,
-        "data_conclusao": null,
+        "concluido": true,
+        "data_conclusao": "2026-09-13",
         "exercicios": [
           {
             "nome": "Aquecimento Mobilidade e Trotinho",
@@ -159,7 +159,51 @@
   },
   "edital_ativo": "CBMPE",
   "cargo_ativo": "2º Tenente do Corpo de Bombeiros Militar",
-  "historico_evolucoes": [],
+  "historico_evolucoes": [
+    {
+      "data": "2026-09-13",
+      "edital": "CBMPE",
+      "cargo": "2º Tenente do Corpo de Bombeiros Militar",
+      "treino": "Dia 1 - Força Superior e Treino Intervalado de Velocidade",
+      "rpe": 7,
+      "exercicios_realizados": [
+        {
+          "nome": "Aquecimento Mobilidade e Trotinho",
+          "tipo": "tempo",
+          "duracao_min": 0
+        },
+        {
+          "nome": "Barra Fixa Pronada",
+          "tipo": "forca",
+          "series_realizadas": 4,
+          "reps_realizadas": 0
+        },
+        {
+          "nome": "Flexão de Braço no Solo (Padrão TAF)",
+          "tipo": "forca",
+          "series_realizadas": 4,
+          "reps_realizadas": 0
+        },
+        {
+          "nome": "Abdominal Remador",
+          "tipo": "forca",
+          "series_realizadas": 4,
+          "reps_realizadas": 0
+        },
+        {
+          "nome": "Tiros de Corrida Intervalada (Pace TAF)",
+          "tipo": "corrida",
+          "distancia_m": 2400,
+          "tempo_seg": 720
+        }
+      ],
+      "obs": "NESTE DIA SÓ REALIZEI UMA CORRIDA DE 5600 METRO EM 38 MINUTOS.",
+      "corrida_m": 2400,
+      "tempo_corrida_seg": 720,
+      "barras": 0,
+      "flexoes": 0
+    }
+  ],
   "chat_ia": [
     {
       "role": "assistant",
