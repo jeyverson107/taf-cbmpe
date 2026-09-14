@@ -6,70 +6,136 @@
   "plano_semanal": {
     "ciclo_id": 1,
     "criado_em": "2026-09-14",
+    "gerado_por_ia": true,
+    "edital_base": "PCPE",
+    "cargo_base": "Escrivão de Polícia",
     "treinos": [
       {
         "id": 1,
-        "dia_nome": "Dia 1 - Força e Superior (Barra & Flexão)",
+        "dia_nome": "Dia 1 - Membros Superiores, Core e Progressão Inicial de Corrida",
         "concluido": false,
         "data_conclusao": null,
         "exercicios": [
           {
-            "nome": "Barra Fixa (ou Isometria)",
-            "series": 4,
-            "reps": "Máximo",
-            "detalhes": "Descanso 90s"
+            "nome": "Aquecimento com Caminhada e Mobilidade Articular",
+            "series": 1,
+            "reps": "10 min",
+            "detalhes": "Caminhada leve seguida de rotações suaves de tornozelo e quadril para preparar o corpo sem sobrecarregar o joelho.",
+            "tipo": "tempo"
           },
           {
-            "nome": "Flexão de Braço Solo",
-            "series": 4,
-            "reps": "30 repetições",
-            "detalhes": "Foco na amplitude"
+            "nome": "Flexão de Braço no Solo (com joelhos apoiados, se necessário)",
+            "series": 3,
+            "reps": "8 a 10 reps",
+            "detalhes": "Exercício de força de membros superiores comum em TAFs. Mantenha o abdômen contraído e apoie os joelhos no colchonete para adaptar ao nível iniciante.",
+            "tipo": "forca"
           },
           {
-            "nome": "Abdominal Remador",
-            "series": 4,
-            "reps": "40 repetições",
-            "detalhes": "Ritmo constante"
+            "nome": "Abdominal Remador (Adaptação para TAF)",
+            "series": 3,
+            "reps": "12 a 15 reps",
+            "detalhes": "Padrão cobrado em bancas como Cebraspe. Realize o movimento de forma controlada, focando em abraçar os joelhos sem tracionar o pescoço.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Agachamento Isométrico na Parede (Wall Sit)",
+            "series": 3,
+            "reps": "20 a 30 seg",
+            "detalhes": "CAUTELA: Devido à dor relatada no joelho esquerdo (região medial/rótula), faça com flexão leve (joelhos a ~60°). Interrompa imediatamente em caso de dor e busque orientação médica/fisioterapêutica.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Caminhada e Trote Intercalado (Cardio Adaptado)",
+            "series": 1,
+            "reps": "18 min",
+            "detalhes": "Intercale 2 minutos de caminhada moderada com 1 minuto de trote bem leve. Cuidado com o impacto no joelho esquerdo.",
+            "tipo": "corrida"
           }
         ]
       },
       {
         "id": 2,
-        "dia_nome": "Dia 2 - Corrida de Resistência (12 min)",
+        "dia_nome": "Dia 2 - Estabilização Articular, Core e Resistência Aeróbica",
         "concluido": false,
         "data_conclusao": null,
         "exercicios": [
           {
-            "nome": "Aquecimento",
+            "nome": "Aquecimento Dinâmico",
             "series": 1,
-            "reps": "10 min",
-            "detalhes": "Trote leve"
+            "reps": "8 min",
+            "detalhes": "Caminhada leve acompanhada de elevação suave de braços e rotação de tronco.",
+            "tipo": "tempo"
           },
           {
-            "nome": "Simulado Corrida 12 min",
+            "nome": "Elevação Pélvica / Ponte para Glúteos",
+            "series": 3,
+            "reps": "12 a 15 reps",
+            "detalhes": "Fortalece glúteos e posteriores de coxa sem impacto articular. Ajuda na estabilização do joelho. CAUTELA: execute de forma suave e consulte um médico se sentir desconforto.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Prancha Abdominal Frontal",
+            "series": 3,
+            "reps": "30 seg",
+            "detalhes": "Mantenha o corpo alinhado e o core contraído para fortalecimento postural essencial para a corrida.",
+            "tipo": "tempo"
+          },
+          {
+            "nome": "Remada Curvada com Halteres Leves ou Elástico",
+            "series": 3,
+            "reps": "10 a 12 reps",
+            "detalhes": "Fortalecimento das costas e postura, auxiliando no equilíbrio muscular corporal.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Caminhada Contínua com Ritmo Acelerado",
             "series": 1,
-            "reps": "12 min",
-            "detalhes": "Ritmo alvo (2400m+)"
+            "reps": "20 min",
+            "detalhes": "Caminhada em ritmo firme para condicionamento cardiovascular com baixíssimo impacto sobre o joelho esquerdo.",
+            "tipo": "corrida"
           }
         ]
       },
       {
         "id": 3,
-        "dia_nome": "Dia 3 - Pernas & Core",
+        "dia_nome": "Dia 3 - Força para TAF e Condicionamento Fracionado",
         "concluido": false,
         "data_conclusao": null,
         "exercicios": [
           {
-            "nome": "Agachamento Livre",
-            "series": 4,
-            "reps": "25 reps",
-            "detalhes": "Cadência controlada"
+            "nome": "Aquecimento Geral",
+            "series": 1,
+            "reps": "10 min",
+            "detalhes": "Caminhada em esteira ou pista com aumento gradual do ritmo.",
+            "tipo": "tempo"
+          },
+          {
+            "nome": "Flexão de Braço no Solo",
+            "series": 3,
+            "reps": "8 a 10 reps",
+            "detalhes": "Foco na amplitude do movimento. Caso sinta fadiga, apoie os joelhos para completar o volume.",
+            "tipo": "forca"
           },
           {
             "nome": "Abdominal Remador",
-            "series": 4,
-            "reps": "35 reps",
-            "detalhes": "Soltar ar na subida"
+            "series": 3,
+            "reps": "12 a 15 reps",
+            "detalhes": "Mantenha o ritmo constante de execução, simulando as exigências de resistência do TAF.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Panturrilha em Pé (Elevação de Calcanhares)",
+            "series": 3,
+            "reps": "15 reps",
+            "detalhes": "Fortalece a musculatura da panturrilha e ajuda na absorção do impacto da corrida. Cautela com o joelho no apoio.",
+            "tipo": "forca"
+          },
+          {
+            "nome": "Treino Intervalado de Corrida (Trote e Caminhada)",
+            "series": 1,
+            "reps": "20 min",
+            "detalhes": "Intercale 1 min e 30 seg de trote leve com 1 min e 30 seg de caminhada. CAUTELA: Monitore constantemente o joelho esquerdo. Se a dor medial aumentar, passe para caminhada total e procure avaliação médica.",
+            "tipo": "corrida"
           }
         ]
       }
