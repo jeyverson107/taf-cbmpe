@@ -35,13 +35,15 @@ api_key = st.secrets.get("GEMINI_API_KEY", None)
 github_token = st.secrets.get("GITHUB_TOKEN", None)
 repo_name = "jeyverson107/taf-cbmpe"
 
-# CORREÇÃO: nome do modelo isolado numa constante.
-# O código original usava "gemini-3.6-flash", que não corresponde a nenhum
-# modelo documentado pela Google (conferido em 14/09/2026). Antes de usar em
-# produção, confira o nome exato em https://ai.google.dev/gemini-api/docs/models
-# "gemini-2.5-flash" é válido hoje, mas a Google já avisou que será desativado
-# em 16/10/2026 — troque para o modelo vigente quando essa data se aproximar.
-GEMINI_MODEL = "gemini-2.5-flash"
+# Nome do modelo isolado numa constante para facilitar a manutenção.
+# CORREÇÃO/RETIFICAÇÃO (14/09/2026): numa resposta anterior eu disse, por engano,
+# que "gemini-3.6-flash" (usado no seu código original) parecia inválido, e
+# sugeri "gemini-2.5-flash". Isso estava ERRADO — o próprio erro 404 da API do
+# Google confirmou que "gemini-2.5-flash" foi descontinuado para novos usuários
+# e que o substituto correto é "gemini-3.6-flash" (modelo da família Gemini 3,
+# lançada em dez/2025, já GA). Voltei ao valor original do seu código.
+# Se no futuro a Google trocar de novo o nome do modelo, ajuste só aqui.
+GEMINI_MODEL = "gemini-3.6-flash"
 
 
 # =============================================================================
