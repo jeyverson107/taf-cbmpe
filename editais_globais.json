@@ -11,5 +11,19 @@
       "Soldado do Corpo de Bombeiros Militar": "Aferição da aptidão física para a carreira militar por meio de exame de aptidão física (as metas específicas do TAF não foram detalhadas no trecho fornecido do edital).",
       "2º Tenente do Corpo de Bombeiros Militar": "Aferição da aptidão física para a carreira militar por meio de exame de aptidão física (as metas específicas do TAF não foram detalhadas no trecho fornecido do edital)."
     }
+  },
+  "PCPE": {
+    "_meta": {
+      "criado_por": "eduart",
+      "criado_em": "2026-09-14T11:12:34",
+      "atualizado_por": "eduart",
+      "atualizado_em": "2026-09-14T11:12:34",
+      "arquivo_origem": "ED_1_2023_PC_PE_ABERTURA.pdf"
+    },
+    "cargos": {
+      "Agente de Polícia": "Prova de capacidade física de caráter eliminatório, de responsabilidade do Cebraspe (as metas específicas e detalhamento dos testes do TAF não constam no trecho fornecido do edital).",
+      "Delegado de Polícia": "Prova de capacidade física de caráter eliminatório, de responsabilidade do Cebraspe (as metas específicas e detalhamento dos testes do TAF não constam no trecho fornecido do edital).",
+      "Escrivão de Polícia": "Prova de capacidade física de caráter eliminatório, de responsabilidade do Cebraspe (as metas específicas e detalhamento dos testes do TAF não constam no trecho fornecido do edital)."
+    }
   }
 }
