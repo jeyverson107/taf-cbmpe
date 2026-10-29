@@ -157,8 +157,8 @@
       "Soldado": "Exigência de aptidão para a carreira militar do Estado aferida por meio de Exame de Aptidão Física (conforme subitem 3.1.3, alínea 'g'). O detalhamento específico de metas e exercícios do TAF não consta no trecho do edital fornecido."
     }
   },
-  "edital_ativo": "CBMPE",
-  "cargo_ativo": "2º Tenente do Corpo de Bombeiros Militar",
+  "edital_ativo": "CBMPE 2026",
+  "cargo_ativo": "2º Tenente QOC (CFO)",
   "historico_evolucoes": [
     {
       "data": "2026-09-13",
@@ -170,38 +170,38 @@
         {
           "nome": "Aquecimento Mobilidade e Trotinho",
           "tipo": "tempo",
-          "duracao_min": 0
+          "duracao_min": null
         },
         {
           "nome": "Barra Fixa Pronada",
           "tipo": "forca",
-          "series_realizadas": 4,
-          "reps_realizadas": 0
+          "series_realizadas": null,
+          "reps_realizadas": null
         },
         {
           "nome": "Flexão de Braço no Solo (Padrão TAF)",
           "tipo": "forca",
-          "series_realizadas": 4,
-          "reps_realizadas": 0
+          "series_realizadas": null,
+          "reps_realizadas": null
         },
         {
           "nome": "Abdominal Remador",
           "tipo": "forca",
-          "series_realizadas": 4,
-          "reps_realizadas": 0
+          "series_realizadas": null,
+          "reps_realizadas": null
         },
         {
-          "nome": "Tiros de Corrida Intervalada (Pace TAF)",
+          "nome": "Corrida contínua (5,6 km)",
           "tipo": "corrida",
-          "distancia_m": 2400,
-          "tempo_seg": 720
+          "distancia_m": 5600,
+          "tempo_seg": 2280
         }
       ],
-      "obs": "NESTE DIA SÓ REALIZEI UMA CORRIDA DE 5600 METRO EM 38 MINUTOS.",
-      "corrida_m": 2400,
-      "tempo_corrida_seg": 720,
-      "barras": 0,
-      "flexoes": 0
+      "obs": "NESTE DIA SÓ REALIZEI UMA CORRIDA DE 5600 METRO EM 38 MINUTOS. [Corrigido em 29/10/2026: o formulário antigo tinha gravado 2400 m/12 min e zeros automaticamente; valores ajustados conforme esta observação.]",
+      "corrida_m": 5600,
+      "tempo_corrida_seg": 2280,
+      "barras": null,
+      "flexoes": null
     }
   ],
   "chat_ia": [

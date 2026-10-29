@@ -25,5 +25,111 @@
       "Delegado de Polícia": "Prova de capacidade física de caráter eliminatório, de responsabilidade do Cebraspe (as metas específicas e detalhamento dos testes do TAF não constam no trecho fornecido do edital).",
       "Escrivão de Polícia": "Prova de capacidade física de caráter eliminatório, de responsabilidade do Cebraspe (as metas específicas e detalhamento dos testes do TAF não constam no trecho fornecido do edital)."
     }
+  },
+  "CBMPE 2026": {
+    "_meta": {
+      "criado_por": "jeyverson",
+      "criado_em": "2026-10-29T09:00:00",
+      "atualizado_por": "jeyverson",
+      "atualizado_em": "2026-10-29T09:00:00",
+      "arquivo_origem": "CBMPE2027.pdf (Edital de Abertura 002/2026 – DOE-PE 29/09/2026)"
+    },
+    "cargos": {
+      "2º Tenente QOC (CFO)": "Edital de Abertura 002/2026 (CBMPE, Instituto AOCP), item 14. Exames de Aptidão Física eliminatórios para TODOS os cargos, em 2 dias consecutivos. Dia 1: barra fixa e natação. Dia 2: flexão abdominal, salto horizontal e corrida de 2.400 m (shuttle run consta da tabela de índices). Masculino: barra dinâmica mín. 8 reps; flexão abdominal mín. 45 em 1 min; salto horizontal mín. 1,70 m; shuttle run máx. 11,40 s; corrida 2.400 m máx. 12'36\"; natação 100 m máx. 1'50\". Feminino: barra isometria mín. 22 s; flexão abdominal mín. 40 em 1 min; salto mín. 1,30 m; shuttle run máx. 13,40 s; corrida 2.400 m máx. 14'49\"; natação 100 m máx. 2'00\". Exige atestado de cardiologista (com RQE) emitido nos 30 dias anteriores aos testes (item 14.4, c).",
+      "Soldado QBMG": "Edital de Abertura 002/2026 (CBMPE, Instituto AOCP), item 14. Exames de Aptidão Física eliminatórios para TODOS os cargos, em 2 dias consecutivos. Dia 1: barra fixa e natação. Dia 2: flexão abdominal, salto horizontal e corrida de 2.400 m (shuttle run consta da tabela de índices). Masculino: barra dinâmica mín. 8 reps; flexão abdominal mín. 45 em 1 min; salto horizontal mín. 1,70 m; shuttle run máx. 11,40 s; corrida 2.400 m máx. 12'36\"; natação 100 m máx. 1'50\". Feminino: barra isometria mín. 22 s; flexão abdominal mín. 40 em 1 min; salto mín. 1,30 m; shuttle run máx. 13,40 s; corrida 2.400 m máx. 14'49\"; natação 100 m máx. 2'00\". Exige atestado de cardiologista (com RQE) emitido nos 30 dias anteriores aos testes (item 14.4, c)."
+    },
+    "provas": [
+      {
+        "id": "barra_dinamica",
+        "nome": "Barra fixa – flexão e extensão (dinâmico)",
+        "sexo": "M",
+        "tipo_medida": "repeticoes",
+        "melhor": "maior",
+        "meta_masc": 8,
+        "meta_fem": null,
+        "dia_prova": 1,
+        "tentativas": 1,
+        "natacao": false,
+        "observacao": "Pegada pronada, queixo acima da barra, extensão total dos cotovelos. Proibido kipping/balanço, parar para descansar ou usar luva/magnésio (item 14.9)."
+      },
+      {
+        "id": "barra_isometria",
+        "nome": "Barra fixa – suspensão em isometria (estático)",
+        "sexo": "F",
+        "tipo_medida": "tempo",
+        "melhor": "maior",
+        "meta_masc": null,
+        "meta_fem": 22,
+        "dia_prova": 1,
+        "tentativas": 1,
+        "natacao": false,
+        "observacao": "Queixo acima da barra sem apoiar, corpo retesado (item 14.10)."
+      },
+      {
+        "id": "natacao_100m",
+        "nome": "Natação 100 m",
+        "sexo": "ambos",
+        "tipo_medida": "tempo",
+        "melhor": "menor",
+        "meta_masc": 110,
+        "meta_fem": 120,
+        "dia_prova": 1,
+        "tentativas": 1,
+        "natacao": true,
+        "observacao": "Qualquer estilo; não pode parar, apoiar na borda/raia nem tocar o fundo (item 14.15)."
+      },
+      {
+        "id": "flexao_abdominal",
+        "nome": "Flexão abdominal em 1 minuto",
+        "sexo": "ambos",
+        "tipo_medida": "repeticoes",
+        "melhor": "maior",
+        "meta_masc": 45,
+        "meta_fem": 40,
+        "dia_prova": 2,
+        "tentativas": 1,
+        "natacao": false,
+        "observacao": "Joelhos a ~45º, braços cruzados no peito com mãos nos ombros; cotovelos tocam a coxa e escápulas voltam ao solo. Pausas são permitidas dentro do 1 minuto (item 14.11)."
+      },
+      {
+        "id": "salto_horizontal",
+        "nome": "Salto horizontal (parado)",
+        "sexo": "ambos",
+        "tipo_medida": "distancia",
+        "melhor": "maior",
+        "meta_masc": 1.7,
+        "meta_fem": 1.3,
+        "dia_prova": 2,
+        "tentativas": 2,
+        "natacao": false,
+        "observacao": "Pés paralelos atrás da linha, saída simultânea dos pés; vale a marca mais próxima da linha. 2 tentativas com 5 min de intervalo (item 14.12)."
+      },
+      {
+        "id": "shuttle_run",
+        "nome": "Shuttle run",
+        "sexo": "ambos",
+        "tipo_medida": "tempo",
+        "melhor": "menor",
+        "meta_masc": 11.4,
+        "meta_fem": 13.4,
+        "dia_prova": 2,
+        "tentativas": 2,
+        "natacao": false,
+        "observacao": "Blocos a 9,14 m; colocar (não jogar) o bloco além da linha. 2 tentativas (item 14.13)."
+      },
+      {
+        "id": "corrida_2400m",
+        "nome": "Corrida de 2.400 m",
+        "sexo": "ambos",
+        "tipo_medida": "tempo",
+        "melhor": "menor",
+        "meta_masc": 756,
+        "meta_fem": 889,
+        "dia_prova": 2,
+        "tentativas": 1,
+        "natacao": false,
+        "observacao": "Pode caminhar, mas NÃO pode parar nem sair da pista — parar reprova (item 14.14)."
+      }
+    ]
   }
 }
