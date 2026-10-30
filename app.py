@@ -1019,6 +1019,66 @@ if ctx_ativo and dados_usuario.get("edital_ativo") != NOME_EDITAL_2026 and NOME_
         f"**{NOME_EDITAL_2026}** — ative-o na aba '📄 Editais & Cargos'."
     )
 
+# -----------------------------------------------------------------------
+# CRONÔMETRO DO TREINO (30/10/2026)
+# Roda no próprio celular (JavaScript) e guarda o horário de início no aparelho.
+# Por isso NÃO para quando a tela apaga, quando você aperta o botão power,
+# sai da página, fecha o navegador ou a internet cai: o tempo é calculado
+# pela diferença entre "agora" e o horário em que você tocou em Iniciar.
+# -----------------------------------------------------------------------
+def cronometro_treino(usuario):
+    import streamlit.components.v1 as components
+    chave = json.dumps("taf_crono_" + (usuario or "anonimo"))
+    components.html("""
+<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#31333F">
+  <div style="font-weight:600;font-size:17px;margin-bottom:4px">⏱️ Cronômetro do treino</div>
+  <div id="t" style="font-size:46px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px">00:00</div>
+  <div id="st" style="font-size:13px;color:#666;margin:2px 0 8px"></div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button id="b1" class="b p">▶️ Iniciar</button>
+    <button id="b2" class="b">🏁 Volta</button>
+    <button id="b3" class="b">🔄 Zerar</button>
+  </div>
+  <div id="v" style="font-size:14px;margin-top:8px;max-height:110px;overflow:auto"></div>
+</div>
+<style>
+ .b{font-size:16px;padding:9px 14px;border-radius:8px;border:1px solid #ccc;background:#fff;cursor:pointer}
+ .p{background:#ff4b4b;color:#fff;border-color:#ff4b4b}
+</style>
+<script>
+const K = %s;
+let s;
+function ler(){ try { s = JSON.parse(localStorage.getItem(K)) || null; } catch(e) { s = null; }
+                if (!s) s = {inicio: null, acum: 0, voltas: []}; }
+function gravar(){ try { localStorage.setItem(K, JSON.stringify(s)); } catch(e) {} }
+const total = () => s.acum + (s.inicio ? Date.now() - s.inicio : 0);
+const p = n => String(n).padStart(2, "0");
+function fmt(ms){ const t = Math.floor(ms/1000), h = Math.floor(t/3600), m = Math.floor(t%%3600/60), x = t%%60;
+                  return (h ? h + ":" + p(m) : p(m)) + ":" + p(x); }
+function desenha(){
+  const ms = total();
+  document.getElementById("t").textContent = fmt(ms);
+  const b1 = document.getElementById("b1");
+  b1.textContent = s.inicio ? "⏸️ Pausar" : (ms > 0 ? "▶️ Continuar" : "▶️ Iniciar");
+  document.getElementById("st").textContent = s.inicio
+    ? "Contando — pode apagar a tela ou guardar o celular: o tempo continua."
+    : (ms > 0 ? "Pausado. Anote o tempo no formulário abaixo (" + Math.floor(ms/60000) + " min " + Math.floor(ms/1000)%%60 + " s)." : "Toque em Iniciar quando começar.");
+  document.getElementById("v").innerHTML = s.voltas.map((v, i) =>
+    "🏁 Volta " + (i+1) + ": <b>" + fmt(v - (i ? s.voltas[i-1] : 0)) + "</b> <span style='color:#888'>(total " + fmt(v) + ")</span>"
+  ).reverse().join("<br>");
+}
+document.getElementById("b1").onclick = () => { ler();
+  if (s.inicio) { s.acum += Date.now() - s.inicio; s.inicio = null; } else { s.inicio = Date.now(); }
+  gravar(); desenha(); };
+document.getElementById("b2").onclick = () => { ler(); if (total() > 0) { s.voltas.push(total()); gravar(); desenha(); } };
+document.getElementById("b3").onclick = () => { ler();
+  if (total() === 0 || confirm("Zerar o cronômetro?")) { s = {inicio: null, acum: 0, voltas: []}; gravar(); desenha(); } };
+ler(); desenha();
+setInterval(() => { ler(); desenha(); }, 500);
+document.addEventListener("visibilitychange", () => { ler(); desenha(); });
+</script>""" % chave, height=270)
+
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["🎯 Treino de Hoje", "📅 Cronograma", "🤖 IA Assistente", "📊 Minha Evolução", "📄 Editais & Cargos"]
 )
@@ -1065,6 +1125,8 @@ with tab1:
             if ex.get("detalhes"):
                 st.caption(f"ℹ️ {ex['detalhes']}")
 
+        st.markdown("---")
+        cronometro_treino(usuario_input)
         st.markdown("---")
         with st.form("form_treino_hoje"):
             st.markdown("### 📝 Registrar Desempenho")
