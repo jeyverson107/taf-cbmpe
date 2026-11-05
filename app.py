@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import json
 import base64
@@ -18,7 +19,7 @@ from google import genai
 # =============================================================================
 st.set_page_config(
     page_title="TAF Pro - Treino & Evolução",
-    page_icon="🏋️‍♂️",
+    page_icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icone.png"),
     layout="wide",
     initial_sidebar_state="expanded",
 )
