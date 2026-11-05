@@ -577,12 +577,17 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
             elif ex.get("valor") is not None:
                 partes.append(f"{ex['nome']}: {ex['valor']}")
         obs = f" | obs: {h['obs']}" if h.get("obs") else ""
-        linhas.append(f"- {h.get('data')} ({h.get('treino')}), esforço {h.get('rpe')}/10: " + "; ".join(partes) + obs)
+        esforco = f", esforço {h['rpe']}/10" if h.get("rpe") is not None else ""
+        linhas.append(f"- {h.get('data')} ({h.get('treino')}){esforco}: " + "; ".join(partes) + obs)
     return "\n".join(linhas) if linhas else "Sem registros ainda."
 
 
-def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisico, config, historico, ciclo_id):
-    """Chama a IA para montar o plano do ciclo (semana) `ciclo_id`. Retorna (plano, erro)."""
+def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisico, config, historico, ciclo_id,
+                               ciclo_resumo=None):
+    """Chama a IA para montar o plano do ciclo (semana) `ciclo_id`. Retorna (plano, erro).
+    `ciclo_resumo` = semana cujos registros/comentários a IA avalia (padrão: a semana anterior)."""
+    if ciclo_resumo is None:
+        ciclo_resumo = ciclo_id - 1
     if not api_key:
         return None, "GEMINI_API_KEY não configurada nos Secrets do Streamlit."
 
@@ -615,7 +620,7 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
     {natacao}
 
     Resultados registrados recentemente (use para calibrar a progressão):
-    {resumo_ciclo_para_ia(historico, ciclo_id - 1)}
+    {resumo_ciclo_para_ia(historico, ciclo_resumo)}
 
     REGRAS OBRIGATÓRIAS:
     1. Segurança em primeiro lugar: progressão gradual (no máximo ~10% de aumento de volume por semana).
@@ -1220,6 +1225,8 @@ with tab1:
                         dados_usuario["historico_evolucoes"].append({
                             "data": str(data_sim), "edital": dados_usuario.get("edital_ativo"),
                             "cargo": dados_usuario.get("cargo_ativo"), "treino": "Simulado TAF",
+                            # Vincula o simulado à semana atual para a IA avaliá-lo na virada da semana.
+                            "ciclo_id": plano.get("ciclo_id", 1),
                             "tipo_registro": "simulado", "rpe": None, "exercicios_realizados": exs, "obs": obs_sim,
                         })
                         if salvar():
@@ -1326,6 +1333,8 @@ with tab3:
                         edital_ativo, cargo_ativo, descricao_taf, provas_ativas, perfil_fisico, cfg,
                         dados_usuario.get("historico_evolucoes", []),
                         dados_usuario.get("plano_semanal", {}).get("ciclo_id", 1),
+                        # Refaz a semana atual avaliando os registros/comentários desta mesma semana.
+                        ciclo_resumo=dados_usuario.get("plano_semanal", {}).get("ciclo_id", 1),
                     )
                 if erro:
                     st.error(f"Não consegui gerar o treino: {erro}")
