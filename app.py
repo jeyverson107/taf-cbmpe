@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 import base64
 import requests
@@ -21,7 +22,7 @@ st.set_page_config(
     page_title="TAF Pro - Treino & Evolução",
     page_icon=os.path.join(os.path.dirname(os.path.abspath(__file__)), "icone.png"),
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",  # no celular começa fechada (o login fica no meio da tela)
 )
 
 pwa_html = """
@@ -49,6 +50,12 @@ DATA_REPO = st.secrets.get("DATA_REPO", CODE_REPO)
 # Nome do modelo da IA. Pode ser trocado pelo secret GEMINI_MODEL, sem mexer
 # no código. Confira o nome válido em https://ai.google.dev/gemini-api/docs/models
 GEMINI_MODEL = st.secrets.get("GEMINI_MODEL", "gemini-3.6-flash")
+
+# Cronômetro por exercício (componente próprio, em componentes/cronometro/index.html).
+# Ele devolve o resultado para o app quando você toca em "Finalizar".
+_cronometro_componente = components.declare_component(
+    "cronometro_taf", path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "componentes", "cronometro")
+)
 
 TIPOS_EXERCICIO = ["forca", "corrida", "tempo", "cronometrado", "distancia"]
 TIPOS_EXERCICIO_DESC = {
@@ -325,11 +332,12 @@ def _github_put(path, dados, sha, mensagem, repo):
 
 def carregar_dados_github(usuario):
     """Lê o perfil do repositório de dados. Se o repositório privado ainda não
-    tiver o perfil, mas o público tiver, COPIA automaticamente (migração)."""
+    tiver o perfil, mas o público tiver, COPIA automaticamente (migração).
+    Retorna (dados, sha, erro). Se houver erro, NÃO deixa entrar com um perfil
+    vazio — isso poderia sobrescrever os dados verdadeiros ao salvar."""
     dados, sha, erro = _github_get(f"dados_{usuario}.json", DATA_REPO)
     if erro:
-        st.sidebar.error(f"❌ {erro}")
-        return {}, None
+        return {}, None, erro
     if not dados and DATA_REPO != CODE_REPO:
         antigos, _, erro_pub = _github_get(f"dados_{usuario}.json", CODE_REPO)
         if not erro_pub and antigos:
@@ -338,10 +346,9 @@ def carregar_dados_github(usuario):
             )
             if novo_sha:
                 st.session_state["aviso_migracao"] = True
-                return antigos, novo_sha
-            st.sidebar.error(f"❌ Não consegui copiar seus dados para o repositório privado: {msg}")
-            return antigos, None
-    return (dados or {}), sha
+                return antigos, novo_sha, None
+            return {}, None, f"Não consegui copiar seus dados para o repositório privado: {msg}"
+    return (dados or {}), sha, None
 
 
 def salvar_dados_github(usuario, dados, sha=None):
@@ -569,7 +576,11 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
             if ex.get("tipo") == "forca" and ex.get("reps_realizadas"):
                 partes.append(f"{ex['nome']}: {ex.get('series_realizadas')} séries, melhor série {ex['reps_realizadas']} reps")
             elif ex.get("tipo") == "corrida" and ex.get("distancia_m"):
-                partes.append(f"{ex['nome']}: {ex['distancia_m']}m em {fmt_tempo(ex.get('tempo_seg'))}")
+                txt = f"{ex['nome']}: {ex['distancia_m']}m em {fmt_tempo(ex.get('tempo_seg'))}"
+                if ex.get("voltas_seg"):
+                    txt += (f" (voltas de {ex.get('pista_m') or '?'} m: "
+                            + ", ".join(fmt_tempo(v) for v in ex["voltas_seg"]) + ")")
+                partes.append(txt)
             elif ex.get("tipo") in ("cronometrado",) and ex.get("tempo_seg"):
                 partes.append(f"{ex['nome']}: {fmt_tempo(ex['tempo_seg'])}")
             elif ex.get("tipo") == "distancia" and ex.get("valor_m"):
@@ -583,7 +594,7 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
 
 
 def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisico, config, historico, ciclo_id,
-                               ciclo_resumo=None):
+                               ciclo_resumo=None, medidas=None):
     """Chama a IA para montar o plano do ciclo (semana) `ciclo_id`. Retorna (plano, erro).
     `ciclo_resumo` = semana cujos registros/comentários a IA avalia (padrão: a semana anterior)."""
     if ciclo_resumo is None:
@@ -616,6 +627,7 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
     {semanas_restantes}
 
     {descrever_perfil_fisico(perfil_fisico)}
+    {descrever_medidas(medidas)}
     Observações do aluno: {config.get('observacoes') or 'nenhuma'}
     {natacao}
 
@@ -732,7 +744,8 @@ def avancar_ciclo(dados, usar_ia=True):
         cfg = dados.get("config_treino", {})
         provas = provas_do_usuario(entrada, perfil.get("sexo"), cfg.get("incluir_natacao", False))
         novo, erro = gerar_treino_personalizado(
-            edital, cargo, descricao, provas, perfil, cfg, dados.get("historico_evolucoes", []), proximo_id
+            edital, cargo, descricao, provas, perfil, cfg, dados.get("historico_evolucoes", []), proximo_id,
+            medidas=dados.get("medidas"),
         )
         if novo:
             dados["plano_semanal"] = novo
@@ -779,6 +792,31 @@ def descrever_perfil_fisico(perfil: dict) -> str:
     return "Perfil físico do aluno: " + "; ".join(partes) + "."
 
 
+def medidas_ordenadas(medidas):
+    return sorted([m for m in (medidas or []) if m.get("data")], key=lambda m: m["data"])
+
+
+def descrever_medidas(medidas) -> str:
+    """Resumo das medidas semanais (peso, cintura, FC de repouso) para a IA."""
+    ms = medidas_ordenadas(medidas)[-8:]
+    if not ms:
+        return "Medidas semanais: ainda não registradas."
+    linhas = []
+    for m in ms:
+        partes = []
+        if m.get("peso_kg"):
+            partes.append(f"peso {m['peso_kg']:.1f} kg")
+        if m.get("cintura_cm"):
+            partes.append(f"cintura {m['cintura_cm']:.1f} cm")
+        if m.get("fc_repouso"):
+            partes.append(f"FC de repouso {int(m['fc_repouso'])} bpm")
+        if m.get("obs"):
+            partes.append(f"obs: {m['obs']}")
+        linhas.append(f"- {m['data']}: " + ", ".join(partes))
+    return ("Medidas semanais do aluno (da mais antiga para a mais recente). Use como sinal de adaptação "
+            "(ex.: FC de repouso subindo + cansaço relatado = sinal para aliviar a carga):\n" + "\n".join(linhas))
+
+
 # =============================================================================
 # MIGRAÇÕES DE DADOS ANTIGOS
 # =============================================================================
@@ -808,38 +846,77 @@ def migrar_dados_antigos(dados):
 
 
 # =============================================================================
-# LOGIN & PERFIL (SIDEBAR)
+# LOGIN (05/11/2026): nome e PIN na MESMA tela, com botão "Entrar".
+# Fica no meio da tela (no celular a barra lateral vem fechada).
 # =============================================================================
 st.sidebar.title("🏋️‍♂️ TAF Pro - Perfil")
-usuario_padrao = st.query_params.get("u", "")
-usuario_raw = st.sidebar.text_input("Seu Nome / Login:", value=usuario_padrao)
-usuario_input = normalizar_usuario(usuario_raw)
-st.sidebar.caption("Dica: salve nos favoritos o link do app com `?u=seunome` no final para já abrir com o seu login.")
 
+
+def _entrar(usuario, dados, sha):
+    st.session_state["usuario_logado"] = usuario
+    st.session_state["dados"] = dados
+    st.session_state["sha"] = sha
+    st.query_params["u"] = usuario  # o link já abre com o seu nome preenchido
+
+
+usuario_input = st.session_state.get("usuario_logado")
 if not usuario_input:
     st.title("🛡️ Central TAF Militar & Treinos")
-    st.info("👈 Digite seu nome/login na barra lateral para começar.")
+    st.subheader("🔐 Entrar")
+    with st.form("form_login"):
+        nome_login = st.text_input("Seu nome / login", value=st.query_params.get("u", ""), autocomplete="username")
+        pin_login = st.text_input(
+            "PIN", type="password", autocomplete="current-password",
+            help="Se o seu perfil ainda não tem PIN, deixe em branco e crie um depois de entrar.",
+        )
+        entrar = st.form_submit_button("➡️ Entrar", type="primary", width="stretch")
+    st.caption("Dica: salve nos favoritos o link do app com `?u=seunome` no final para já abrir com o seu nome.")
+    if entrar:
+        u = normalizar_usuario(nome_login)
+        if not u:
+            st.error("Digite seu nome/login.")
+            st.stop()
+        with st.spinner("Abrindo seu perfil..."):
+            dados_remotos, sha_remoto, erro_carga = carregar_dados_github(u)
+        if erro_carga:
+            st.error(f"❌ Não consegui abrir seu perfil agora: {erro_carga}. Tente de novo em instantes.")
+            st.stop()
+        dados_remotos = migrar_dados_antigos(dados_remotos or {})
+        if tem_pin(dados_remotos):
+            if not pin_login:
+                st.error("🔒 Este perfil é protegido. Digite o PIN.")
+                st.stop()
+            if not conferir_pin(pin_login, dados_remotos):
+                st.error("PIN incorreto.")
+                st.stop()
+            if dados_remotos.get("pin_hash"):
+                # Atualiza o PIN antigo para o formato seguro, sem pedir nada ao usuário.
+                dados_remotos["pin"] = gerar_registro_pin(pin_login)
+                dados_remotos.pop("pin_hash", None)
+                novo_sha, _ = salvar_dados_github(u, dados_remotos, sha_remoto)
+                sha_remoto = novo_sha or sha_remoto
+        elif pin_login:
+            st.session_state["aviso_sem_pin"] = True
+        _entrar(u, dados_remotos, sha_remoto)
+        st.rerun()
     st.stop()
 
-if usuario_raw.strip().lower().replace(" ", "_") != usuario_input:
-    st.sidebar.caption(f"Login normalizado para: `{usuario_input}`")
-
-# Toda vez que o login muda, os dados são recarregados (evita misturar perfis).
-if st.session_state.get("usuario_carregado") != usuario_input:
-    dados_remotos, sha_remoto = carregar_dados_github(usuario_input)
-    st.session_state["dados"] = migrar_dados_antigos(dados_remotos or {})
-    st.session_state["sha"] = sha_remoto
-    st.session_state["usuario_carregado"] = usuario_input
-    st.session_state["pin_ok"] = False
-
-if st.sidebar.button("🔄 Recarregar Meus Dados Agora"):
-    dados_remotos, sha_remoto = carregar_dados_github(usuario_input)
-    st.session_state["dados"] = migrar_dados_antigos(dados_remotos or {})
-    st.session_state["sha"] = sha_remoto
-    st.session_state["pin_ok"] = False
-    st.rerun()
-
 dados_usuario = st.session_state["dados"]
+
+st.sidebar.success(f"👤 Conectado como **{usuario_input}**")
+c_rec, c_sair = st.sidebar.columns(2)
+if c_rec.button("🔄 Recarregar", help="Busca de novo os seus dados salvos na nuvem"):
+    dados_remotos, sha_remoto, erro_carga = carregar_dados_github(usuario_input)
+    if erro_carga:
+        st.sidebar.error(f"❌ {erro_carga}")
+    else:
+        st.session_state["dados"] = migrar_dados_antigos(dados_remotos or {})
+        st.session_state["sha"] = sha_remoto
+        st.rerun()
+if c_sair.button("🚪 Sair"):
+    for k in ("usuario_logado", "dados", "sha"):
+        st.session_state.pop(k, None)
+    st.rerun()
 
 
 def salvar():
@@ -854,42 +931,24 @@ if st.session_state.pop("aviso_migracao", False):
     st.sidebar.success("🔐 Seus dados foram copiados para o repositório privado.")
 
 # -----------------------------------------------------------------------
-# PROTEÇÃO POR PIN
-# -----------------------------------------------------------------------
+# PIN: perfis sem PIN podem criar um aqui.
 # Não é um login robusto, mas impede o acesso/edição por engano de outro perfil.
 # A proteção real dos dados é o repositório PRIVADO (secret DATA_REPO).
-if tem_pin(dados_usuario):
-    if not st.session_state.get("pin_ok"):
-        st.sidebar.info("🔒 Perfil protegido por PIN.")
-        pin_tentativa = st.sidebar.text_input("Digite o PIN para continuar:", type="password", key=f"pin_{usuario_input}")
-        if pin_tentativa:
-            if conferir_pin(pin_tentativa, dados_usuario):
-                st.session_state["pin_ok"] = True
-                if dados_usuario.get("pin_hash"):
-                    # Atualiza o PIN antigo para o formato seguro, sem pedir nada ao usuário.
-                    dados_usuario["pin"] = gerar_registro_pin(pin_tentativa)
-                    dados_usuario.pop("pin_hash", None)
-                    salvar()
-                st.rerun()
-            else:
-                st.sidebar.error("PIN incorreto.")
-        st.title("🛡️ Central TAF Militar & Treinos")
-        st.info("🔒 Digite o PIN na barra lateral para abrir seu perfil.")
-        st.stop()
-else:
+# -----------------------------------------------------------------------
+if not tem_pin(dados_usuario):
+    if st.session_state.pop("aviso_sem_pin", False):
+        st.sidebar.info("O PIN digitado não foi usado: este perfil ainda não tem PIN. Crie um abaixo.")
     st.sidebar.warning("⚠️ Este perfil ainda não tem PIN de proteção.")
     with st.sidebar.form("form_criar_pin"):
-        novo_pin = st.text_input("Criar um PIN (mín. 6 dígitos):", type="password")
+        novo_pin = st.text_input("Criar um PIN (mín. 6 dígitos):", type="password", autocomplete="new-password")
         if st.form_submit_button("Definir PIN"):
             if len(novo_pin) >= 6:
                 dados_usuario["pin"] = gerar_registro_pin(novo_pin)
                 if salvar():
-                    st.session_state["pin_ok"] = True
                     st.sidebar.success("PIN definido e salvo!")
                     st.rerun()
             else:
                 st.sidebar.error("Use pelo menos 6 dígitos.")
-    st.session_state["pin_ok"] = True
 
 # Estrutura padrão (perfis antigos que só tenham parte dos campos não quebram)
 dados_usuario.setdefault("perfil_fisico", {})
@@ -897,6 +956,7 @@ dados_usuario.setdefault("edital_ativo", None)
 dados_usuario.setdefault("cargo_ativo", None)
 dados_usuario.setdefault("plano_semanal", plano_padrao())
 dados_usuario.setdefault("historico_evolucoes", [])
+dados_usuario.setdefault("medidas", [])
 dados_usuario.setdefault("config_treino", {"dias_por_semana": 3, "incluir_natacao": False, "data_taf": None, "observacoes": ""})
 dados_usuario.setdefault(
     "chat_ia",
@@ -1085,6 +1145,142 @@ document.addEventListener("visibilitychange", () => { ler(); desenha(); });
 </script>""" % chave, height=270)
 
 
+# -----------------------------------------------------------------------
+# MEDIDAS SEMANAIS (05/11/2026): peso, cintura e frequência cardíaca de repouso
+# -----------------------------------------------------------------------
+def medida_da_semana_pendente():
+    ms = medidas_ordenadas(dados_usuario.get("medidas"))
+    if not ms:
+        return True
+    try:
+        return (datetime.date.today() - datetime.date.fromisoformat(ms[-1]["data"])).days >= 7
+    except ValueError:
+        return True
+
+
+def form_medidas(sufixo):
+    with st.form(f"form_medidas_{sufixo}", clear_on_submit=True):
+        st.caption("Meça sempre no mesmo dia da semana, de manhã, antes de comer e depois de ir ao banheiro. "
+                   "Preencha só o que você mediu.")
+        data_m = st.date_input("Data da medição", value=datetime.date.today(), format="DD/MM/YYYY", key=f"med_data_{sufixo}")
+        c1, c2, c3 = st.columns(3)
+        peso = c1.number_input("Peso (kg)", min_value=30.0, max_value=250.0, value=None, step=0.1, format="%.1f",
+                               key=f"med_peso_{sufixo}")
+        cintura = c2.number_input("Cintura (cm)", min_value=40.0, max_value=200.0, value=None, step=0.5, format="%.1f",
+                                  key=f"med_cint_{sufixo}",
+                                  help="Fita métrica na altura do umbigo, sem apertar, ao final de uma expiração normal.")
+        fc = c3.number_input("FC de repouso (bpm)", min_value=30, max_value=150, value=None, step=1, key=f"med_fc_{sufixo}",
+                             help="Ao acordar, ainda deitado: conte os batimentos no pulso por 60 segundos (ou use um relógio).")
+        obs = st.text_input("Como foi a semana? (sono, dores, cansaço) — opcional", key=f"med_obs_{sufixo}")
+        if st.form_submit_button("💾 Salvar medidas", type="primary"):
+            if peso is None and cintura is None and fc is None:
+                st.warning("Preencha pelo menos uma medida.")
+                return
+            data_str = str(data_m)
+            anterior = next((m for m in dados_usuario["medidas"] if m.get("data") == data_str), {})
+            nova = dict(anterior)
+            nova["data"] = data_str
+            if peso is not None:
+                nova["peso_kg"] = round(float(peso), 1)
+            if cintura is not None:
+                nova["cintura_cm"] = round(float(cintura), 1)
+            if fc is not None:
+                nova["fc_repouso"] = int(fc)
+            if obs.strip():
+                nova["obs"] = obs.strip()
+            nova["registrado_em"] = agora_iso()
+            lista = [m for m in dados_usuario["medidas"] if m.get("data") != data_str] + [nova]
+            dados_usuario["medidas"] = medidas_ordenadas(lista)
+            # O peso mais recente passa a valer no Perfil Físico (a IA usa esse peso).
+            com_peso = [m for m in dados_usuario["medidas"] if m.get("peso_kg")]
+            if com_peso:
+                dados_usuario.setdefault("perfil_fisico", {})["peso_kg"] = com_peso[-1]["peso_kg"]
+            if salvar():
+                st.session_state["toast"] = "✅ Medidas salvas!"
+                st.rerun()
+
+
+# -----------------------------------------------------------------------
+# CRONÔMETRO POR EXERCÍCIO (05/11/2026)
+# Os resultados ficam num "rascunho" salvo na nuvem até você salvar o treino,
+# então nada se perde se o app recarregar no meio do treino.
+# -----------------------------------------------------------------------
+def alvo_corrida(ex):
+    """Sugere a meta de distância da corrida a partir do exercício (ex.: '2.400 m')."""
+    if ex.get("prova_id") == "corrida_2400m":
+        return 2400
+    m = re.search(r"(\d{1,2}\.\d{3}|\d{2,5})\s*m\b", f"{ex.get('nome', '')} {ex.get('reps', '')}")
+    if m:
+        v = int(m.group(1).replace(".", ""))
+        return v if 100 <= v <= 20000 else None
+    return None
+
+
+def texto_tempo(seg):
+    seg = float(seg)
+    if seg < 60:
+        return f"{seg:.2f}"
+    return f"{int(seg // 60)}:{seg % 60:05.2f}"
+
+
+def rascunho_atual(ck):
+    r = dados_usuario.get("rascunho_treino")
+    if not isinstance(r, dict) or r.get("ck") != ck:
+        r = {"ck": ck, "resultados": {}, "ids": []}
+    return r
+
+
+def preencher_formulario(ck, i, tipo, res, forcar):
+    """Coloca o resultado do cronômetro nos campos do formulário de registro."""
+    def setar(k, v):
+        if forcar or k not in st.session_state:
+            st.session_state[k] = v
+    t = res.get("tempo_seg")
+    if not t:
+        return
+    if tipo == "corrida":
+        setar(f"dist_{ck}_{i}", int(res["distancia_m"]) if res.get("distancia_m") else None)
+        mi, se = divmod(int(round(t)), 60)
+        setar(f"min_{ck}_{i}", mi)
+        setar(f"seg_{ck}_{i}", se)
+    elif tipo == "cronometrado":
+        setar(f"crono_{ck}_{i}", texto_tempo(t))
+    elif tipo == "tempo":
+        setar(f"dur_{ck}_{i}", max(1, int(round(t / 60))))
+
+
+def cronometro_do_exercicio(ck, i, ex, rasc):
+    tipo = ex.get("tipo")
+    modo = "voltas" if tipo == "corrida" else "simples"
+    res = _cronometro_componente(
+        chave=f"taf_crono_ex_{usuario_input}_{ck}_{i}",
+        modo=modo,
+        titulo="🏃 Cronômetro de voltas" if modo == "voltas" else "⏱️ Cronômetro deste exercício",
+        usuario=usuario_input,
+        pista=400,
+        alvo=alvo_corrida(ex) if modo == "voltas" else None,
+        confirmados=rasc["ids"][-30:],
+        key=f"cronoex_{ck}_{i}",
+        default=None,
+    )
+    if isinstance(res, dict) and res.get("id") and res["id"] not in rasc["ids"]:
+        rasc["ids"] = (rasc["ids"] + [res["id"]])[-30:]
+        if res.get("tempo_seg"):
+            anterior = rasc["resultados"].get(str(i)) or {}
+            res["tentativas_seg"] = (anterior.get("tentativas_seg") or []) + [res["tempo_seg"]]
+            rasc["resultados"][str(i)] = res
+            preencher_formulario(ck, i, tipo, res, forcar=True)
+        dados_usuario["rascunho_treino"] = rasc
+        salvar()
+        st.session_state["toast"] = "✅ Resultado do cronômetro registrado no formulário abaixo."
+        st.rerun()
+    r = rasc["resultados"].get(str(i))
+    if r and modo == "simples" and len(r.get("tentativas_seg") or []) > 1:
+        st.caption("Tentativas de hoje: " + " · ".join(fmt_tempo(x) for x in r["tentativas_seg"])
+                   + " — o formulário ficou com a última; ajuste se quiser outra.")
+
+
+
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["🎯 Treino de Hoje", "📅 Cronograma", "🤖 IA Assistente", "📊 Minha Evolução", "📄 Editais & Cargos"]
 )
@@ -1092,10 +1288,17 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 # -----------------------------------------------------------------------
 # TAB 1: TREINO DE HOJE
 # -----------------------------------------------------------------------
+if st.session_state.get("toast"):
+    st.toast(st.session_state.pop("toast"))
+
 with tab1:
     st.header("🎯 Treino de Hoje")
     if st.session_state.get("msg_ciclo"):
         st.success(st.session_state.pop("msg_ciclo"))
+
+    if medida_da_semana_pendente():
+        with st.expander("⚖️ Hora de registrar suas medidas da semana (peso, cintura, FC de repouso)"):
+            form_medidas("hoje")
 
     plano = dados_usuario.get("plano_semanal") or plano_padrao()
     dados_usuario["plano_semanal"] = plano
@@ -1125,14 +1328,25 @@ with tab1:
         st.subheader(f"📌 {treino_pendente['dia_nome']}")
         st.caption("O próximo treino é liberado quando você marcar este como concluído.")
 
-        for ex in treino_pendente["exercicios"]:
+        ck = f"{plano.get('ciclo_id', 1)}_{treino_pendente.get('id', idx_pendente + 1)}"
+        rasc = rascunho_atual(ck)
+        for i_r, r in rasc["resultados"].items():
+            if i_r.isdigit() and int(i_r) < len(treino_pendente["exercicios"]):
+                preencher_formulario(ck, int(i_r), treino_pendente["exercicios"][int(i_r)].get("tipo"), r, forcar=False)
+
+        for i, ex in enumerate(treino_pendente["exercicios"]):
             etiqueta = f" · 🏁 prova: {nomes_provas.get(ex.get('prova_id'), '')}" if ex.get("prova_id") in nomes_provas else ""
             st.markdown(f"**{ex['nome']}** — `{ex.get('series', 1)}x {ex.get('reps', '')}`{etiqueta}")
             if ex.get("detalhes"):
                 st.caption(f"ℹ️ {ex['detalhes']}")
+            if ex.get("tipo") in ("corrida", "cronometrado", "tempo"):
+                ja = " ✅" if str(i) in rasc["resultados"] else ""
+                with st.expander(f"⏱️ Cronômetro deste exercício{ja}", expanded=ex.get("tipo") == "corrida"):
+                    cronometro_do_exercicio(ck, i, ex, rasc)
 
         st.markdown("---")
-        cronometro_treino(usuario_input)
+        with st.expander("⏱️ Cronômetro livre (descanso entre séries, etc.)"):
+            cronometro_treino(usuario_input)
         st.markdown("---")
         with st.form("form_treino_hoje"):
             st.markdown("### 📝 Registrar Desempenho")
@@ -1145,26 +1359,36 @@ with tab1:
                 tipo = ex.get("tipo", "forca")
                 st.markdown(f"**{ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`")
                 base = {"nome": ex["nome"], "tipo": tipo, "prova_id": ex.get("prova_id")}
+                r_crono = rasc["resultados"].get(str(i)) or {}
                 if tipo == "corrida":
                     c1, c2, c3 = st.columns(3)
-                    dist = c1.number_input("Distância (m)", min_value=0, value=None, step=50, key=f"dist_{i}")
-                    mi = c2.number_input("Minutos", min_value=0, value=None, step=1, key=f"min_{i}")
-                    se = c3.number_input("Segundos", min_value=0, max_value=59, value=None, step=1, key=f"seg_{i}")
+                    dist = c1.number_input("Distância (m)", min_value=0, value=None, step=50, key=f"dist_{ck}_{i}")
+                    mi = c2.number_input("Minutos", min_value=0, value=None, step=1, key=f"min_{ck}_{i}")
+                    se = c3.number_input("Segundos", min_value=0, max_value=59, value=None, step=1, key=f"seg_{ck}_{i}")
                     tempo = (mi or 0) * 60 + (se or 0)
-                    respostas.append({**base, "distancia_m": dist, "tempo_seg": tempo or None})
+                    resp = {**base, "distancia_m": dist, "tempo_seg": tempo or None}
+                    if r_crono.get("voltas_seg"):
+                        resp["voltas_seg"] = r_crono["voltas_seg"]
+                        resp["pista_m"] = r_crono.get("pista_m")
+                        st.caption(f"🏁 {len(r_crono['voltas_seg'])} voltas de {r_crono.get('pista_m')} m vindas do cronômetro: "
+                                   + " · ".join(fmt_tempo(v) for v in r_crono["voltas_seg"]))
+                    respostas.append(resp)
                 elif tipo == "tempo":
-                    dur = st.number_input("Duração realizada (min)", min_value=0, value=None, step=1, key=f"dur_{i}")
+                    dur = st.number_input("Duração realizada (min)", min_value=0, value=None, step=1, key=f"dur_{ck}_{i}")
                     respostas.append({**base, "duracao_min": dur})
                 elif tipo == "cronometrado":
-                    txt = st.text_input("Tempo (ex.: 12.35 ou 1:05)", key=f"crono_{i}")
-                    respostas.append({**base, "tempo_seg": parse_tempo(txt)})
+                    txt = st.text_input("Tempo (ex.: 12.35 ou 1:05)", key=f"crono_{ck}_{i}")
+                    resp = {**base, "tempo_seg": parse_tempo(txt)}
+                    if len(r_crono.get("tentativas_seg") or []) > 1:
+                        resp["tentativas_seg"] = r_crono["tentativas_seg"]
+                    respostas.append(resp)
                 elif tipo == "distancia":
-                    v = st.number_input("Marca (m)", min_value=0.0, value=None, step=0.01, format="%.2f", key=f"distm_{i}")
+                    v = st.number_input("Marca (m)", min_value=0.0, value=None, step=0.01, format="%.2f", key=f"distm_{ck}_{i}")
                     respostas.append({**base, "valor_m": v})
                 else:
                     c1, c2 = st.columns(2)
-                    series_feitas = c1.number_input("Séries completas", min_value=0, value=None, step=1, key=f"ser_{i}")
-                    reps_feitas = c2.number_input("Reps na melhor série", min_value=0, value=None, step=1, key=f"reps_{i}")
+                    series_feitas = c1.number_input("Séries completas", min_value=0, value=None, step=1, key=f"ser_{ck}_{i}")
+                    reps_feitas = c2.number_input("Reps na melhor série", min_value=0, value=None, step=1, key=f"reps_{ck}_{i}")
                     respostas.append({**base, "series_realizadas": series_feitas, "reps_realizadas": reps_feitas})
 
             obs = st.text_area("Observações (dores, sensações, condições do dia):")
@@ -1186,6 +1410,7 @@ with tab1:
                         "exercicios_realizados": respostas,
                         "obs": obs,
                     })
+                    dados_usuario.pop("rascunho_treino", None)  # o rascunho do cronômetro já entrou no registro
                     msg = None
                     if all(t.get("concluido") for t in treinos):
                         # AUTOMAÇÃO: última sessão da semana → monta a próxima sozinho.
@@ -1335,6 +1560,7 @@ with tab3:
                         dados_usuario.get("plano_semanal", {}).get("ciclo_id", 1),
                         # Refaz a semana atual avaliando os registros/comentários desta mesma semana.
                         ciclo_resumo=dados_usuario.get("plano_semanal", {}).get("ciclo_id", 1),
+                        medidas=dados_usuario.get("medidas"),
                     )
                 if erro:
                     st.error(f"Não consegui gerar o treino: {erro}")
@@ -1364,6 +1590,7 @@ with tab3:
             partes_ctx.append(f"Concurso: {ctx_ativo[0]}, cargo {ctx_ativo[1]}.")
             partes_ctx.append(descrever_provas_para_ia(provas_ativas, sexo_usuario))
         partes_ctx.append(descrever_perfil_fisico(perfil_fisico))
+        partes_ctx.append(descrever_medidas(dados_usuario.get("medidas")))
         plano_txt = "; ".join(
             f"{t['dia_nome']}: " + ", ".join(e["nome"] for e in t["exercicios"])
             for t in dados_usuario.get("plano_semanal", {}).get("treinos", [])
@@ -1412,6 +1639,66 @@ with tab3:
 # -----------------------------------------------------------------------
 with tab4:
     st.header("📊 Minha Evolução")
+
+    # ---- Medidas semanais ----
+    st.subheader("⚖️ Medidas semanais")
+    medidas = medidas_ordenadas(dados_usuario.get("medidas"))
+    with st.expander("➕ Registrar medidas", expanded=not medidas):
+        form_medidas("evolucao")
+    if medidas:
+        df_m = pd.DataFrame(medidas).reindex(columns=["data", "peso_kg", "cintura_cm", "fc_repouso", "obs"])
+        df_m["data"] = pd.to_datetime(df_m["data"])
+        indicadores = [
+            ("peso_kg", "Peso", "kg", "off"),
+            ("cintura_cm", "Cintura", "cm", "inverse"),
+            ("fc_repouso", "FC de repouso", "bpm", "inverse"),
+        ]
+        cols_m = st.columns(len(indicadores) + 1)
+        for col, (campo, rotulo, un, cor) in zip(cols_m, indicadores):
+            serie = df_m[["data", campo]].dropna()
+            if serie.empty:
+                col.metric(rotulo, "—")
+                continue
+            atual, primeiro = float(serie[campo].iloc[-1]), float(serie[campo].iloc[0])
+            fmt_n = (lambda v: f"{v:.0f}") if campo == "fc_repouso" else (lambda v: f"{v:.1f}".replace(".", ","))
+            delta = None if len(serie) < 2 else f"{fmt_n(atual - primeiro)} {un} desde o início"
+            col.metric(rotulo, f"{fmt_n(atual)} {un}", delta, delta_color=cor)
+        altura = dados_usuario.get("perfil_fisico", {}).get("altura_cm")
+        pesos = df_m["peso_kg"].dropna()
+        if altura and not pesos.empty:
+            imc = float(pesos.iloc[-1]) / (float(altura) / 100) ** 2
+            cols_m[-1].metric("IMC", f"{imc:.1f}".replace(".", ","),
+                              help="Peso ÷ altura². É só uma referência geral: não diferencia músculo de gordura.")
+        st.caption("Cintura e FC de repouso diminuindo costumam indicar melhora do condicionamento. "
+                   "FC de repouso bem acima do seu normal pode ser sinal de cansaço acumulado ou de que algo não vai bem.")
+
+        abas_m = st.tabs([r for _, r, _, _ in indicadores])
+        for aba, (campo, rotulo, un, _) in zip(abas_m, indicadores):
+            with aba:
+                serie = df_m[["data", campo]].dropna()
+                if serie.empty:
+                    st.info(f"Nenhum registro de {rotulo.lower()} ainda.")
+                else:
+                    st.plotly_chart(px.line(serie, x="data", y=campo, markers=True, labels={campo: un, "data": "Data"}),
+                                    width="stretch", key=f"graf_medida_{campo}")
+
+        with st.expander(f"📋 Todas as medidas ({len(medidas)})"):
+            tabela = df_m.sort_values("data", ascending=False).copy()
+            tabela["data"] = tabela["data"].dt.strftime("%d/%m/%Y")
+            st.dataframe(tabela.rename(columns={"data": "Data", "peso_kg": "Peso (kg)", "cintura_cm": "Cintura (cm)",
+                                                "fc_repouso": "FC repouso (bpm)", "obs": "Observações"}),
+                         hide_index=True, width="stretch")
+            datas_m = [m["data"] for m in reversed(medidas)]
+            c_d1, c_d2 = st.columns([3, 1])
+            data_apagar = c_d1.selectbox("Apagar a medida do dia:", datas_m,
+                                         format_func=lambda d: datetime.date.fromisoformat(d).strftime("%d/%m/%Y"))
+            if c_d2.button("🗑️ Apagar", key="apagar_medida"):
+                dados_usuario["medidas"] = [m for m in medidas if m.get("data") != data_apagar]
+                if salvar():
+                    st.session_state["toast"] = "Medida apagada."
+                    st.rerun()
+    st.markdown("---")
+
     hist = dados_usuario.get("historico_evolucoes", [])
     if not hist:
         st.info("Nenhum treino registrado ainda. Registre seus treinos na primeira aba para ver os gráficos!")
@@ -1464,6 +1751,7 @@ with tab4:
             for ex in h.get("exercicios_realizados") or []:
                 if ex.get("tipo") == "corrida" and ex.get("distancia_m") and ex.get("tempo_seg"):
                     corridas.append({"data": h["data"], "distancia_m": ex["distancia_m"], "tempo_seg": ex["tempo_seg"]})
+        alvo_2400 = next((meta_para(p, sexo_usuario) for p in provas_ativas if p["id"] == "corrida_2400m"), None)
         if corridas:
             df_c = pd.DataFrame(corridas)
             df_c["data"] = pd.to_datetime(df_c["data"])
@@ -1471,12 +1759,38 @@ with tab4:
             st.subheader("⏱️ Ritmo das corridas (min/km) — quanto menor, melhor")
             fig_r = px.line(df_c.sort_values("data"), x="data", y="ritmo", markers=True, hover_data=["distancia_m"],
                             labels={"ritmo": "min/km", "data": "Data"})
-            alvo_2400 = next((meta_para(p, sexo_usuario) for p in provas_ativas if p["id"] == "corrida_2400m"), None)
             if alvo_2400:
                 ritmo_alvo = (alvo_2400 / 60) / 2.4
                 fig_r.add_hline(y=ritmo_alvo, line_dash="dash", line_color="green",
                                 annotation_text=f"Ritmo da meta dos 2.400 m ({ritmo_alvo:.2f} min/km)")
             st.plotly_chart(fig_r, width="stretch")
+
+        # ---- Voltas das corridas feitas com o cronômetro de voltas ----
+        com_voltas = []
+        for h in hist:
+            for ex in h.get("exercicios_realizados") or []:
+                if ex.get("tipo") == "corrida" and ex.get("voltas_seg"):
+                    com_voltas.append((h.get("data"), ex))
+        if com_voltas:
+            st.subheader("🏁 Ritmo volta a volta")
+            com_voltas.sort(key=lambda x: str(x[0]), reverse=True)
+            esc = st.selectbox(
+                "Corrida:", range(len(com_voltas)),
+                format_func=lambda k: (f"{datetime.date.fromisoformat(com_voltas[k][0]):%d/%m/%Y} — {com_voltas[k][1].get('nome')} "
+                                       f"({com_voltas[k][1].get('distancia_m') or '—'} m em {fmt_tempo(com_voltas[k][1].get('tempo_seg'))})"),
+            )
+            ex_v = com_voltas[esc][1]
+            pista_v = ex_v.get("pista_m") or 400
+            df_v = pd.DataFrame({"volta": range(1, len(ex_v["voltas_seg"]) + 1), "seg": ex_v["voltas_seg"]})
+            df_v["tempo"] = df_v["seg"].apply(fmt_tempo)
+            fig_v = px.bar(df_v, x="volta", y="seg", text="tempo", labels={"volta": f"Volta ({pista_v:.0f} m)", "seg": "segundos"})
+            if alvo_2400:
+                volta_meta = alvo_2400 / 2400 * pista_v
+                fig_v.add_hline(y=volta_meta, line_dash="dash", line_color="green",
+                                annotation_text=f"Volta no ritmo da meta ({fmt_tempo(volta_meta)})")
+            st.plotly_chart(fig_v, width="stretch")
+            st.caption("Voltas parecidas entre si = ritmo bem distribuído. Se as últimas ficam muito mais lentas, "
+                       "a saída provavelmente foi rápida demais.")
 
         # ---- Esforço percebido ----
         df_rpe = pd.DataFrame([{"data": h["data"], "rpe": h.get("rpe")} for h in hist if h.get("rpe")])

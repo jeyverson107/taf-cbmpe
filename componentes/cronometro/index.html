@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Cronômetro por exercício do TAF Pro (05/11/2026).
+  - Cada exercício tem o seu próprio cronômetro (chave própria no aparelho).
+  - O tempo é calculado pelo relógio do aparelho (horário de início), então
+    NÃO se perde se a tela apagar, o navegador fechar ou a internet cair.
+  - Modo "voltas" (corrida): informa o tamanho da pista e toca em "Volta".
+  - Ao tocar em "Finalizar", o resultado é enviado ao app. Se a conexão
+    estiver fora, ele fica guardado no aparelho e é reenviado sozinho.
+-->
+<style>
+  :root { --txt:#31333F; --fundo:#ffffff; --prim:#ff4b4b; --borda:#d0d0d6; --sutil:#6b6b76; --caixa:#f4f4f7; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background:transparent; color:var(--txt);
+               font-family:-apple-system,"Segoe UI",Roboto,"Source Sans Pro",sans-serif; }
+  .card { border:1px solid var(--borda); border-radius:12px; padding:12px; }
+  .titulo { font-weight:600; font-size:15px; margin-bottom:6px; }
+  .relogio { font-size:44px; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:1px; line-height:1.1; }
+  .sub { font-size:13px; color:var(--sutil); margin:2px 0 8px; min-height:16px; }
+  .linha { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+  .b { font-size:16px; padding:10px 14px; border-radius:10px; border:1px solid var(--borda);
+       background:var(--fundo); color:var(--txt); cursor:pointer; touch-action:manipulation; }
+  .b:disabled { opacity:.45; cursor:default; }
+  .p { background:var(--prim); color:#fff; border-color:var(--prim); }
+  .volta { width:100%; font-size:24px; font-weight:700; padding:22px 10px; border-radius:14px; }
+  .ok { background:#21a35a; color:#fff; border-color:#21a35a; }
+  input[type=number] { font-size:16px; padding:8px; width:90px; border-radius:8px; border:1px solid var(--borda);
+                       background:var(--fundo); color:var(--txt); }
+  .chip { font-size:14px; padding:6px 10px; border-radius:16px; }
+  .chip.sel { background:var(--prim); color:#fff; border-color:var(--prim); }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0; }
+  .stat { background:var(--caixa); border-radius:8px; padding:6px 8px; }
+  .stat .r { font-size:11px; color:var(--sutil); }
+  .stat .v { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:14px; font-variant-numeric:tabular-nums; }
+  td, th { padding:4px 6px; border-bottom:1px solid var(--borda); text-align:left; }
+  th { font-size:12px; color:var(--sutil); font-weight:600; }
+  .lista { max-height:220px; overflow:auto; margin-top:6px; }
+  .rapida { color:#21a35a; font-weight:700; }
+  .lenta { color:#d9822b; font-weight:700; }
+  .aviso { font-size:13px; padding:8px; border-radius:8px; background:var(--caixa); margin-top:8px; }
+  label { font-size:14px; }
+</style>
+</head>
+<body>
+<div class="card" id="raiz">
+  <div class="titulo" id="titulo">⏱️ Cronômetro</div>
+  <div id="config"></div>
+  <div class="relogio" id="relogio">00:00</div>
+  <div class="sub" id="status"></div>
+  <div id="stats"></div>
+  <div id="botoes"></div>
+  <div class="lista" id="lista"></div>
+  <div id="aviso"></div>
+</div>
+<script>
+// ---------------------------------------------------------------------------
+// Comunicação com o Streamlit (protocolo oficial de componentes, sem bibliotecas)
+// ---------------------------------------------------------------------------
+function enviar(tipo, extra) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: tipo }, extra || {}), "*");
+}
+let ultimaAltura = 0;
+function ajustarAltura() {
+  const h = Math.ceil(document.getElementById("raiz").getBoundingClientRect().height) + 4;
+  if (h !== ultimaAltura) { ultimaAltura = h; enviar("streamlit:setFrameHeight", { height: h }); }
+}
+
+let ARGS = null;   // argumentos vindos do Python
+let K = null;      // chave do estado deste exercício no aparelho
+let s = null;      // estado
+
+function estadoVazio() {
+  return { inicio: null, acum: 0, voltas: [], pista: null, alvo: null, pendente: null, ultimo: null };
+}
+function ler() {
+  try { s = JSON.parse(localStorage.getItem(K)) || null; } catch (e) { s = null; }
+  if (!s) s = estadoVazio();
+  if (s.pista == null) {
+    let p = null;
+    try { p = parseFloat(localStorage.getItem("taf_pista_" + ARGS.usuario)); } catch (e) {}
+    s.pista = (p && p > 0) ? p : (ARGS.pista || 400);
+  }
+  if (s.alvo == null && ARGS.alvo) s.alvo = ARGS.alvo;
+}
+function gravar() { try { localStorage.setItem(K, JSON.stringify(s)); } catch (e) {} }
+
+// ---------------------------------------------------------------------------
+// Utilidades
+// ---------------------------------------------------------------------------
+const total = () => s.acum + (s.inicio ? Date.now() - s.inicio : 0);
+const dois = n => String(n).padStart(2, "0");
+function fmt(ms, decimos) {
+  const t = Math.max(0, ms) / 1000, h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = Math.floor(t % 60);
+  let txt = (h ? h + ":" + dois(m) : dois(m)) + ":" + dois(x);
+  if (decimos) txt += "," + Math.floor((t * 10) % 10);
+  return txt;
+}
+function ritmo(ms, metros) {   // min/km
+  if (!metros || ms <= 0) return "—";
+  const seg = (ms / 1000) / (metros / 1000), m = Math.floor(seg / 60), x = Math.round(seg % 60);
+  return (x === 60 ? (m + 1) + ":00" : m + ":" + dois(x)) + "/km";
+}
+const parciais = () => s.voltas.map((v, i) => v - (i ? s.voltas[i - 1] : 0));
+function vibrar() { try { navigator.vibrate && navigator.vibrate(80); } catch (e) {} }
+function metrosTxt(m) { return Math.round(m).toLocaleString("pt-BR") + " m"; }
+
+// Mantém a tela acesa durante a contagem (quando o aparelho permitir).
+let trava = null, travaOk = null;
+async function manterTelaAcesa(ligar) {
+  try {
+    if (ligar && !trava) {
+      const wl = (window.parent && window.parent.navigator && window.parent.navigator.wakeLock) || navigator.wakeLock;
+      if (!wl) { travaOk = false; return; }
+      trava = await wl.request("screen");
+      travaOk = true;
+      trava.addEventListener("release", () => { trava = null; });
+    } else if (!ligar && trava) { await trava.release(); trava = null; }
+  } catch (e) { travaOk = false; trava = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Ações
+// ---------------------------------------------------------------------------
+function iniciarPausar() {
+  ler();
+  if (s.inicio) { s.acum += Date.now() - s.inicio; s.inicio = null; manterTelaAcesa(false); }
+  else { s.inicio = Date.now(); s.ultimo = null; manterTelaAcesa(true); }
+  gravar(); desenhar(true);
+}
+function marcarVolta() {
+  ler();
+  if (!s.inicio) return;
+  const t = total(), ult = s.voltas.length ? s.voltas[s.voltas.length - 1] : 0;
+  if (t - ult < 3000) return;            // evita toque duplo sem querer
+  s.voltas.push(t); gravar(); vibrar(); desenhar(true);
+}
+function desfazerVolta() { ler(); if (s.voltas.length) { s.voltas.pop(); gravar(); desenhar(true); } }
+function zerar() {
+  ler();
+  if (total() > 0 && !confirm("Descartar esta contagem? Nada será registrado.")) return;
+  const pista = s.pista, alvo = s.alvo, pendente = s.pendente, ultimo = s.ultimo;
+  s = estadoVazio(); s.pista = pista; s.alvo = alvo; s.pendente = pendente; s.ultimo = ultimo;
+  manterTelaAcesa(false); gravar(); desenhar(true);
+}
+function finalizar() {
+  ler();
+  let fim = total();
+  if (fim <= 0) return;
+  if (s.inicio) { s.acum = fim; s.inicio = null; }
+  const modoVoltas = ARGS.modo === "voltas";
+  if (modoVoltas) {
+    const ult = s.voltas.length ? s.voltas[s.voltas.length - 1] : 0;
+    const aberto = fim - ult;
+    if (aberto > 2000) {
+      const pergunta = s.voltas.length
+        ? "O trecho final (" + fmt(aberto) + ") foi uma volta COMPLETA?\n\nOK = contar como volta\nCancelar = descartar esse trecho (ex.: desaquecimento)"
+        : "Você não marcou nenhuma volta. Contar o tempo todo como 1 volta de " + metrosTxt(s.pista) + "?";
+      if (confirm(pergunta)) { s.voltas.push(fim); }
+      else if (s.voltas.length) { fim = ult; }
+    }
+  }
+  const voltasSeg = parciais().map(v => Math.round(v / 10) / 100);
+  const resultado = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    modo: ARGS.modo,
+    tempo_seg: Math.round(fim / 10) / 100,
+    voltas_seg: modoVoltas ? voltasSeg : [],
+    pista_m: modoVoltas ? s.pista : null,
+    distancia_m: modoVoltas ? Math.round(s.voltas.length * s.pista) : null,
+    finalizado_em: new Date().toISOString(),
+  };
+  const pista = s.pista, alvo = s.alvo;
+  s = estadoVazio(); s.pista = pista; s.alvo = alvo;
+  s.pendente = resultado; s.ultimo = resultado;
+  gravar(); manterTelaAcesa(false);
+  enviar("streamlit:setComponentValue", { value: resultado, dataType: "json" });
+  desenhar(true);
+}
+function escolherPista(m) {
+  ler(); if (!(m > 0)) return;
+  s.pista = m; gravar();
+  try { localStorage.setItem("taf_pista_" + ARGS.usuario, String(m)); } catch (e) {}
+  desenhar(true);
+}
+function escolherAlvo(m) { ler(); s.alvo = (m > 0) ? m : 0; gravar(); desenhar(false); }
+
+// ---------------------------------------------------------------------------
+// Desenho da tela
+// ---------------------------------------------------------------------------
+let ultimaEstrutura = "";
+function desenhar(forcar) {
+  if (!s) return;
+  const ms = total(), rodando = !!s.inicio, modoVoltas = ARGS.modo === "voltas";
+  const nVoltas = s.voltas.length, ultV = nVoltas ? s.voltas[nVoltas - 1] : 0;
+  const dist = nVoltas * (s.pista || 0);
+
+  document.getElementById("relogio").textContent = fmt(ms, !modoVoltas && ms < 600000);
+
+  let st;
+  if (rodando) {
+    st = modoVoltas ? "Volta " + (nVoltas + 1) + " em andamento: " + fmt(ms - ultV)
+                    : "Contando — pode apagar a tela: o tempo continua.";
+  } else if (ms > 0) {
+    st = "Pausado. Toque em Continuar ou Finalizar.";
+  } else {
+    st = modoVoltas ? "Escolha o tamanho da pista e toque em Iniciar." : "Toque em Iniciar quando começar.";
+  }
+  document.getElementById("status").textContent = st;
+
+  // Estrutura (só redesenha botões/configuração quando algo muda, para não "piscar")
+  const estrutura = JSON.stringify([rodando, ms > 0, nVoltas, s.pista, s.alvo, !!s.pendente, s.ultimo && s.ultimo.id, travaOk]);
+  if (forcar || estrutura !== ultimaEstrutura) {
+    ultimaEstrutura = estrutura;
+    desenharConfig(ms > 0);
+    desenharBotoes(rodando, ms > 0, nVoltas);
+    desenharLista();
+    desenharAviso();
+  }
+
+  if (modoVoltas) {
+    const p = parciais();
+    const melhor = p.length ? Math.min.apply(null, p) : 0;
+    let voltasTxt = String(nVoltas), rotulo = "Voltas";
+    if (s.alvo && s.pista) {
+      const meta = Math.ceil(s.alvo / s.pista - 1e-9);
+      voltasTxt = nVoltas + " de " + meta;
+      if (nVoltas >= meta) rotulo = "Voltas ✅ meta!";
+    }
+    if (ms === 0 && !nVoltas) { document.getElementById("stats").innerHTML = ""; ajustarAltura(); return; }
+    document.getElementById("stats").innerHTML =
+      '<div class="stats">' +
+      '<div class="stat"><div class="r">' + rotulo + '</div><div class="v">' + voltasTxt + '</div></div>' +
+      '<div class="stat"><div class="r">Distância</div><div class="v">' + metrosTxt(dist) + '</div></div>' +
+      '<div class="stat"><div class="r">Ritmo médio</div><div class="v">' + (nVoltas ? ritmo(ultV, dist) : "—") + '</div></div>' +
+      '</div>' +
+      (nVoltas ? '<div class="sub">Última volta: <b>' + fmt(p[p.length - 1]) + '</b> · Melhor: <b>' + fmt(melhor) + '</b></div>' : "");
+  } else {
+    document.getElementById("stats").innerHTML = "";
+  }
+  ajustarAltura();
+}
+
+function desenharConfig(emAndamento) {
+  const el = document.getElementById("config");
+  if (ARGS.modo !== "voltas" || emAndamento) { el.innerHTML = ""; return; }
+  const pistas = [200, 400, 600];
+  let html = '<div class="linha"><label>Pista:</label>';
+  pistas.forEach(m => { html += '<button class="b chip' + (s.pista === m ? " sel" : "") + '" data-pista="' + m + '">' + m + ' m</button>'; });
+  html += '<input type="number" id="pistaOutra" min="10" step="10" placeholder="outra" value="' + (pistas.includes(s.pista) ? "" : s.pista) + '"> m</div>';
+  html += '<div class="linha"><label>Meta (opcional):</label>' +
+          '<input type="number" id="alvo" min="0" step="100" value="' + (s.alvo || "") + '" placeholder="ex.: 2400"> m' +
+          (s.alvo && s.pista ? ' <span class="sub">= ' + Math.ceil(s.alvo / s.pista - 1e-9) + ' voltas</span>' : '') + '</div>';
+  el.innerHTML = html;
+  el.querySelectorAll("[data-pista]").forEach(b => b.onclick = () => escolherPista(parseFloat(b.dataset.pista)));
+  document.getElementById("pistaOutra").onchange = e => escolherPista(parseFloat(e.target.value));
+  document.getElementById("alvo").onchange = e => escolherAlvo(parseFloat(e.target.value));
+}
+
+function desenharBotoes(rodando, temTempo, nVoltas) {
+  const modoVoltas = ARGS.modo === "voltas";
+  let html = "";
+  if (modoVoltas && rodando) html += '<button class="b p volta" id="bVolta">🏁 VOLTA</button>';
+  html += '<div class="linha">';
+  html += '<button class="b' + (rodando ? "" : " p") + '" id="bIni">' + (rodando ? "⏸️ Pausar" : (temTempo ? "▶️ Continuar" : "▶️ Iniciar")) + '</button>';
+  html += '<button class="b ok" id="bFim"' + (temTempo ? "" : " disabled") + '>✅ Finalizar</button>';
+  if (modoVoltas) html += '<button class="b" id="bDesf"' + (nVoltas ? "" : " disabled") + '>↩️ Desfazer volta</button>';
+  html += '<button class="b" id="bZer"' + (temTempo ? "" : " disabled") + '>🗑️ Descartar</button>';
+  html += '</div>';
+  const el = document.getElementById("botoes");
+  el.innerHTML = html;
+  const v = document.getElementById("bVolta"); if (v) v.onclick = marcarVolta;
+  document.getElementById("bIni").onclick = iniciarPausar;
+  document.getElementById("bFim").onclick = finalizar;
+  const d = document.getElementById("bDesf"); if (d) d.onclick = desfazerVolta;
+  document.getElementById("bZer").onclick = zerar;
+}
+
+function desenharLista() {
+  const el = document.getElementById("lista");
+  if (ARGS.modo !== "voltas" || !s.voltas.length) { el.innerHTML = ""; return; }
+  const p = parciais(), melhor = Math.min.apply(null, p), pior = Math.max.apply(null, p);
+  let html = "<table><tr><th>Volta</th><th>Tempo</th><th>Ritmo</th><th>Total</th></tr>";
+  for (let i = p.length - 1; i >= 0; i--) {
+    const cls = p.length > 1 ? (p[i] === melhor ? "rapida" : (p[i] === pior ? "lenta" : "")) : "";
+    html += "<tr><td>" + (i + 1) + "</td><td class='" + cls + "'>" + fmt(p[i]) + "</td><td>" + ritmo(p[i], s.pista) +
+            "</td><td>" + fmt(s.voltas[i]) + "</td></tr>";
+  }
+  el.innerHTML = html + "</table>";
+}
+
+function desenharAviso() {
+  const el = document.getElementById("aviso");
+  let html = "";
+  if (s.pendente) {
+    html += '<div class="aviso">📤 Enviando o resultado para o app… Se a internet estiver fora, ele fica guardado ' +
+            'neste aparelho e é enviado sozinho quando a conexão voltar.</div>';
+  } else if (s.ultimo && !s.inicio && total() === 0) {
+    const u = s.ultimo;
+    const txt = u.modo === "voltas"
+      ? metrosTxt(u.distancia_m) + " em " + fmt(u.tempo_seg * 1000) + " (" + u.voltas_seg.length + " voltas)"
+      : fmt(u.tempo_seg * 1000, u.tempo_seg < 600);
+    html += '<div class="aviso">✅ Registrado: <b>' + txt + '</b>. Para fazer de novo, toque em Iniciar.</div>';
+  }
+  if (s.inicio && travaOk === false && ARGS.modo === "voltas") {
+    html += '<div class="aviso">💡 Este aparelho não deixou o app manter a tela acesa. Se a tela apagar, o tempo ' +
+            'continua contando, mas para marcar as voltas sem desbloquear, aumente o tempo de bloqueio da tela nas configurações do celular.</div>';
+  }
+  el.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Recebe os dados do Python a cada atualização do app
+// ---------------------------------------------------------------------------
+window.addEventListener("message", ev => {
+  const d = ev.data;
+  if (!d || d.type !== "streamlit:render") return;
+  ARGS = d.args || {};
+  K = ARGS.chave || "taf_crono_exercicio";
+  const t = d.theme;
+  if (t) {
+    const r = document.documentElement.style;
+    if (t.textColor) r.setProperty("--txt", t.textColor);
+    if (t.backgroundColor) r.setProperty("--fundo", t.backgroundColor);
+    if (t.primaryColor) r.setProperty("--prim", t.primaryColor);
+    if (t.secondaryBackgroundColor) r.setProperty("--caixa", t.secondaryBackgroundColor);
+    if (t.base === "dark") { r.setProperty("--borda", "#4a4c57"); r.setProperty("--sutil", "#a3a8b4"); }
+  }
+  document.getElementById("titulo").textContent = ARGS.titulo || "⏱️ Cronômetro";
+  ler();
+  // O Python confirma o que já recebeu; o que estiver pendente é reenviado.
+  const confirmados = ARGS.confirmados || [];
+  if (s.pendente) {
+    if (confirmados.includes(s.pendente.id)) { s.pendente = null; gravar(); }
+    else { enviar("streamlit:setComponentValue", { value: s.pendente, dataType: "json" }); }
+  }
+  if (s.inicio) manterTelaAcesa(true);
+  desenhar(true);
+});
+
+enviar("streamlit:componentReady", { apiVersion: 1 });
+setInterval(() => { if (ARGS) { ler(); desenhar(false); } }, 250);
+document.addEventListener("visibilitychange", () => {
+  if (!ARGS) return;
+  ler();
+  if (document.visibilityState === "visible" && s.inicio) manterTelaAcesa(true);
+  desenhar(true);
+});
+</script>
+</body>
+</html>
