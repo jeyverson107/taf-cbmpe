@@ -73,6 +73,9 @@ TIPOS_EXERCICIO_DESC = {
 # Tempos em SEGUNDOS, distâncias em METROS.
 # =============================================================================
 NOME_EDITAL_2026 = "CBMPE 2026"
+# Período de aplicação do TAF no cronograma do edital (Anexo I do Edital 002/2026):
+# "Entre os dias 23/07 e 01/08/2027". O app considera o 1º dia como a data do seu TAF.
+PERIODO_TAF = {NOME_EDITAL_2026: {"inicio": "2027-07-23", "fim": "2027-08-01"}}
 PROVAS_CBMPE_2026 = [
     {
         "id": "barra_dinamica", "nome": "Barra fixa – flexão e extensão (dinâmico)", "sexo": "M",
@@ -1203,6 +1206,12 @@ with st.sidebar.expander("👤 Meu Perfil Físico", expanded=not perfil_ok):
 # PREFERÊNCIAS DE TREINO
 # -----------------------------------------------------------------------
 cfg = dados_usuario["config_treino"]
+periodo_taf = PERIODO_TAF.get(dados_usuario.get("edital_ativo"))
+if periodo_taf and not cfg.get("data_taf"):
+    # Sem data informada: usa o 1º dia do período do TAF previsto no edital.
+    cfg["data_taf"] = periodo_taf["inicio"]
+    cfg["data_taf_origem"] = "edital"
+    salvar()
 with st.sidebar.expander("⚙️ Preferências de Treino"):
     with st.form("form_config"):
         dias_sem = st.slider("Dias de treino por semana", 2, 6, int(cfg.get("dias_por_semana", 3)))
@@ -1213,6 +1222,10 @@ with st.sidebar.expander("⚙️ Preferências de Treino"):
         tem_data = st.checkbox("Já sei a data do TAF", value=bool(cfg.get("data_taf")))
         data_padrao = datetime.date.fromisoformat(cfg["data_taf"]) if cfg.get("data_taf") else datetime.date.today() + datetime.timedelta(days=180)
         data_taf = st.date_input("Data do TAF", value=data_padrao, format="DD/MM/YYYY")
+        if periodo_taf:
+            ini_p, fim_p = (datetime.date.fromisoformat(periodo_taf[k]) for k in ("inicio", "fim"))
+            st.caption(f"Pelo cronograma do edital (Anexo I), o TAF será entre {ini_p:%d/%m/%Y} e {fim_p:%d/%m/%Y}. "
+                       f"O app usa o 1º dia ({ini_p:%d/%m/%Y}) — mude só se sair a sua convocação com outra data.")
         observacoes = st.text_area(
             "Observações para a IA (ex.: horários, onde treina, equipamentos)",
             value=cfg.get("observacoes", ""),
