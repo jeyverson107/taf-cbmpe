@@ -96,8 +96,10 @@ PROVAS_CBMPE_2026 = [
         "id": "flexao_abdominal", "nome": "Flexão abdominal em 1 minuto", "sexo": "ambos",
         "tipo_medida": "repeticoes", "melhor": "maior", "meta_masc": 45, "meta_fem": 40,
         "dia_prova": 2, "tentativas": 1, "natacao": False,
-        "observacao": "Joelhos a ~45º, braços cruzados no peito com mãos nos ombros; cotovelos tocam a coxa e "
-                      "escápulas voltam ao solo. Pausas são permitidas dentro do 1 minuto (item 14.11).",
+        "observacao": "NÃO é o abdominal remador. Deitado de costas, joelhos a ~45º, pés paralelos (abertura do quadril) e "
+                      "pés/joelhos SEGUROS por um avaliador; antebraços cruzados no peito com as mãos nos ombros o tempo todo. "
+                      "Sobe até os cotovelos tocarem a coxa (entre o meio da coxa e o joelho) e desce até a parte inferior das "
+                      "escápulas tocar o solo. Pausas permitidas dentro do 1 minuto; 1 tentativa (item 14.11).",
     },
     {
         "id": "salto_horizontal", "nome": "Salto horizontal (parado)", "sexo": "ambos",
@@ -148,6 +150,7 @@ REGRAS_IMPORTANTES_2026 = [
     "Não há segunda chamada. Se você se lesionar e não puder continuar durante o teste, é eliminado (itens 14.1.3 e 14.7.1). **Treinar sem se machucar é parte da prova.**",
     "**Corrida de 2.400 m:** pode caminhar, mas **não pode parar**. O relógio/GPS não vale como resultado oficial (item 14.14).",
     "**Barra:** 1 única tentativa, sem kipping, sem balanço e sem pausas para descansar (item 14.9).",
+    "**Abdominal:** NÃO é o remador. É a flexão abdominal com braços cruzados no peito, mãos nos ombros e pés seguros pelo avaliador; os cotovelos tocam a coxa e as escápulas voltam ao solo (item 14.11).",
     "**Salto e shuttle run:** 2 tentativas, com 5 minutos de intervalo; vale a melhor (itens 14.12 e 14.13).",
     "**Atenção:** o item 14.3 cita \"flexão de braços\" e \"corrida de 50 metros\", mas a tabela de índices (14.1/14.2) traz barra fixa e shuttle run. Vale acompanhar retificações do edital.",
 ]
@@ -644,6 +647,11 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
     5. Quando um exercício for a execução da própria prova (teste ou simulado), preencha "prova_id"
        com um destes valores: {ids_validos}. Caso contrário, use null.
     6. Se houver restrições de saúde, adapte os exercícios e indique cautela no campo "detalhes".
+    7. ABDOMINAL: a prova do CBMPE NÃO é o abdominal remador. NUNCA prescreva "abdominal remador".
+       Treine o movimento da prova (item 14.11): braços cruzados no peito, mãos nos ombros, pés presos
+       (parceiro ou apoio firme), cotovelos tocando a coxa e escápulas voltando ao solo. Nas séries comuns,
+       chame o exercício de "Abdominal padrão do edital" (prova_id null); só use prova_id "flexao_abdominal"
+       no teste de 1 minuto valendo como simulado. Como complemento, pode usar prancha e outros exercícios de core.
 
     Retorne ESTRITAMENTE um JSON válido (nada fora do JSON), no formato:
     {{"treinos": [{{"dia_nome": "Dia 1 - ...", "exercicios": [
@@ -820,6 +828,34 @@ def descrever_medidas(medidas) -> str:
 # =============================================================================
 # MIGRAÇÕES DE DADOS ANTIGOS
 # =============================================================================
+DETALHE_ABD_EDITAL = (
+    "Movimento da prova (item 14.11), NÃO o remador: deitado, joelhos a ~45º, pés presos (parceiro ou apoio firme), "
+    "braços cruzados no peito com as mãos nos ombros o tempo todo. Suba até os cotovelos tocarem a coxa e desça até "
+    "as escápulas tocarem o chão. Repetição sem esses dois contatos não conta na prova."
+)
+
+
+def corrigir_abdominal_remador(dados):
+    """07/11/2026: a prova do CBMPE não usa o abdominal remador. Troca, nos treinos
+    AINDA NÃO FEITOS, o remador pelo abdominal do edital. O histórico não é alterado
+    (o que você fez foi remador mesmo, e isso não conta como resultado da prova).
+    Retorna True se mudou algo."""
+    mudou = False
+    for t in (dados.get("plano_semanal") or {}).get("treinos", []) or []:
+        if t.get("concluido"):
+            continue
+        for ex in t.get("exercicios", []) or []:
+            if "remador" not in sem_acento(ex.get("nome", "")):
+                continue
+            cronometrado = "cronometr" in sem_acento(ex.get("nome", "")) or "1 min" in sem_acento(str(ex.get("reps", "")))
+            ex["nome"] = "Abdominal padrão do edital – séries de 1 minuto" if cronometrado else "Abdominal padrão do edital"
+            ex["detalhes"] = DETALHE_ABD_EDITAL + (" Faça o máximo de repetições corretas em cada minuto." if cronometrado else "")
+            ex["tipo"] = "forca"
+            ex["prova_id"] = None
+            mudou = True
+    return mudou
+
+
 def migrar_dados_antigos(dados):
     """Converte o 'diario' do formato antigo para o histórico atual (uma vez)."""
     if dados.get("diario") and not dados.get("diario_migrado"):
@@ -882,6 +918,7 @@ if not usuario_input:
             st.error(f"❌ Não consegui abrir seu perfil agora: {erro_carga}. Tente de novo em instantes.")
             st.stop()
         dados_remotos = migrar_dados_antigos(dados_remotos or {})
+        corrigiu_abd = corrigir_abdominal_remador(dados_remotos)
         if tem_pin(dados_remotos):
             if not pin_login:
                 st.error("🔒 Este perfil é protegido. Digite o PIN.")
@@ -897,6 +934,10 @@ if not usuario_input:
                 sha_remoto = novo_sha or sha_remoto
         elif pin_login:
             st.session_state["aviso_sem_pin"] = True
+        if corrigiu_abd:
+            novo_sha, _ = salvar_dados_github(u, dados_remotos, sha_remoto)
+            sha_remoto = novo_sha or sha_remoto
+            st.session_state["toast"] = "🔧 O abdominal remador do seu plano foi trocado pelo abdominal do edital."
         _entrar(u, dados_remotos, sha_remoto)
         st.rerun()
     st.stop()
@@ -911,6 +952,7 @@ if c_rec.button("🔄 Recarregar", help="Busca de novo os seus dados salvos na n
         st.sidebar.error(f"❌ {erro_carga}")
     else:
         st.session_state["dados"] = migrar_dados_antigos(dados_remotos or {})
+        corrigir_abdominal_remador(st.session_state["dados"])
         st.session_state["sha"] = sha_remoto
         st.rerun()
 if c_sair.button("🚪 Sair"):
@@ -1609,7 +1651,8 @@ with tab3:
                         "Você é um preparador físico especialista em TAF de concursos militares. Responda em "
                         "português do Brasil, de forma objetiva e segura. Você NÃO consegue alterar o plano do "
                         "aluno: se sugerir mudanças, diga que ele pode editá-las na aba 'Cronograma'. "
-                        "Não invente índices de edital: use apenas os informados.\n\n"
+                        "Não invente índices de edital: use apenas os informados. O abdominal da prova do CBMPE NÃO é "
+                        "o remador: é a flexão abdominal com braços cruzados no peito e pés seguros pelo avaliador (item 14.11).\n\n"
                         + "\n".join(partes_ctx)
                         + f"\n\nConversa recente:\n{conversa}\n\nPergunta do aluno: {prompt_user}"
                     ),
