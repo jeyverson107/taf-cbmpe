@@ -57,9 +57,10 @@ _cronometro_componente = components.declare_component(
     "cronometro_taf", path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "componentes", "cronometro")
 )
 
-TIPOS_EXERCICIO = ["forca", "corrida", "tempo", "cronometrado", "distancia"]
+TIPOS_EXERCICIO = ["forca", "isometria", "corrida", "tempo", "cronometrado", "distancia"]
 TIPOS_EXERCICIO_DESC = {
     "forca": "séries x repetições",
+    "isometria": "sustentação em segundos por série (prancha, barra isométrica)",
     "corrida": "distância + tempo",
     "tempo": "duração livre (aquecimento, caminhada, mobilidade)",
     "cronometrado": "tempo cronometrado (ex.: shuttle run, isometria)",
@@ -233,6 +234,72 @@ def fmt_valor(prova, v) -> str:
 
 def parse_valor(prova, texto):
     return parse_tempo(texto) if prova.get("tipo_medida") == "tempo" else parse_numero(texto)
+
+
+# -----------------------------------------------------------------------
+# REGISTRO DETALHADO (07/11/2026): reps/segundos por série, execução e sensação
+# -----------------------------------------------------------------------
+STATUS_OPCOES = {"feito": "✅ Fiz", "parcial": "🟡 Parcial", "nao_fez": "❌ Não fiz"}
+SENSACAO_OPCOES = {"facil": "😌 Fácil", "ok": "🙂 Ok", "dificil": "😣 Difícil"}
+CAMPOS_DE_DADOS = ("reps_series", "seg_series", "reps_realizadas", "distancia_m", "tempo_seg", "duracao_min", "valor_m", "valor")
+
+
+def tipo_registro(ex):
+    """Tipo usado no registro. Exercícios de 'força' medidos em segundos (prancha,
+    barra isométrica...) viram 'isometria' para anotar segundos, não repetições."""
+    t = ex.get("tipo") or "forca"
+    if t == "forca" and not ex.get("reps_series"):
+        n = sem_acento(ex.get("nome", ""))
+        r = sem_acento(str(ex.get("reps", "")))
+        if any(k in n for k in ("prancha", "isometr", "sustenta")) or re.search(r"\d+\s*(s|seg|segundos?)\b", r):
+            return "isometria"
+    return t
+
+
+def parse_series(texto, em_segundos=False):
+    """'8 7 6 5' -> [8, 7, 6, 5]; em segundos aceita '45 40 1:05'. Retorna (lista, erro)."""
+    t = (texto or "").strip()
+    if not t:
+        return [], None
+    partes = [x for x in re.split(r"[\s;/,+\-]+", t) if x]
+    valores = []
+    for x in partes[:20]:
+        if em_segundos:
+            v = parse_tempo(x)
+            if v is None or v < 0 or v > 3600:
+                return None, f"'{x}' não é um tempo válido"
+            valores.append(round(v, 1))
+        else:
+            if not x.isdigit() or int(x) > 500:
+                return None, f"'{x}' não é um número de repetições válido"
+            valores.append(int(x))
+    return valores, None
+
+
+def tem_dados(ex):
+    return any(ex.get(k) not in (None, "", [], 0) for k in CAMPOS_DE_DADOS)
+
+
+def resumo_series(ex):
+    """Texto do resultado de força/isometria (aceita registros antigos)."""
+    if ex.get("reps_series"):
+        return " · ".join(str(x) for x in ex["reps_series"]) + f" reps (total {sum(ex['reps_series'])})"
+    if ex.get("seg_series"):
+        return " · ".join(fmt_tempo(x) for x in ex["seg_series"])
+    if ex.get("series_realizadas") or ex.get("reps_realizadas"):
+        return f"{ex.get('series_realizadas') or '—'} séries · melhor série {ex.get('reps_realizadas') or '—'} reps"
+    return "—"
+
+
+def etiquetas_execucao(ex):
+    partes = []
+    if ex.get("status"):
+        partes.append(STATUS_OPCOES.get(ex["status"], ex["status"]))
+    if ex.get("sensacao"):
+        partes.append(SENSACAO_OPCOES.get(ex["sensacao"], ex["sensacao"]))
+    if ex.get("variacao"):
+        partes.append(f"variação: {ex['variacao']}")
+    return " · ".join(partes)
 
 
 def meta_texto(prova, meta):
@@ -576,14 +643,19 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
     for h in itens[-8:]:
         partes = []
         for ex in h.get("exercicios_realizados") or []:
-            if ex.get("tipo") == "forca" and ex.get("reps_realizadas"):
-                partes.append(f"{ex['nome']}: {ex.get('series_realizadas')} séries, melhor série {ex['reps_realizadas']} reps")
+            tags = etiquetas_execucao(ex)
+            tags = f" [{tags}]" if tags else ""
+            if ex.get("status") == "nao_fez":
+                partes.append(f"{ex['nome']}: NÃO FEITO{tags}")
+            elif ex.get("tipo") in ("forca", "isometria") and (ex.get("reps_series") or ex.get("seg_series")
+                                                                or ex.get("reps_realizadas")):
+                partes.append(f"{ex['nome']}: {resumo_series(ex)}{tags}")
             elif ex.get("tipo") == "corrida" and ex.get("distancia_m"):
                 txt = f"{ex['nome']}: {ex['distancia_m']}m em {fmt_tempo(ex.get('tempo_seg'))}"
                 if ex.get("voltas_seg"):
                     txt += (f" (voltas de {ex.get('pista_m') or '?'} m: "
                             + ", ".join(fmt_tempo(v) for v in ex["voltas_seg"]) + ")")
-                partes.append(txt)
+                partes.append(txt + tags)
             elif ex.get("tipo") in ("cronometrado",) and ex.get("tempo_seg"):
                 partes.append(f"{ex['nome']}: {fmt_tempo(ex['tempo_seg'])}")
             elif ex.get("tipo") == "distancia" and ex.get("valor_m"):
@@ -652,12 +724,17 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
        (parceiro ou apoio firme), cotovelos tocando a coxa e escápulas voltando ao solo. Nas séries comuns,
        chame o exercício de "Abdominal padrão do edital" (prova_id null); só use prova_id "flexao_abdominal"
        no teste de 1 minuto valendo como simulado. Como complemento, pode usar prancha e outros exercícios de core.
+    8. Nos registros, cada exercício pode trazer execução (Fiz/Parcial/Não fiz), sensação (Fácil/Ok/Difícil),
+       repetições ou segundos de CADA série e a variação usada. Exercício "Fácil" e completo → progrida;
+       "Difícil", "Parcial" ou queda grande entre a 1ª e a última série → mantenha ou reduza; "Não fiz" → reavalie.
+       Use "isometria" (segundos por série) para prancha e barra isométrica.
 
     Retorne ESTRITAMENTE um JSON válido (nada fora do JSON), no formato:
     {{"treinos": [{{"dia_nome": "Dia 1 - ...", "exercicios": [
         {{"nome": "...", "series": 3, "reps": "...", "detalhes": "...", "tipo": "forca", "prova_id": null}}
     ]}}]}}
-    "tipo" deve ser um de: "forca" (séries/repetições), "corrida" (distância + tempo),
+    "tipo" deve ser um de: "forca" (séries/repetições), "isometria" (sustentação em segundos por série:
+    prancha, barra isométrica), "corrida" (distância + tempo),
     "tempo" (duração livre: aquecimento, caminhada, mobilidade), "cronometrado" (tempo de uma
     execução: shuttle run, isometria na barra) ou "distancia" (marca em metros: salto horizontal).
     """
@@ -1289,10 +1366,117 @@ def preencher_formulario(ck, i, tipo, res, forcar):
         setar(f"crono_{ck}_{i}", texto_tempo(t))
     elif tipo == "tempo":
         setar(f"dur_{ck}_{i}", max(1, int(round(t / 60))))
+    elif tipo == "isometria":
+        setar(f"rs_{ck}_{i}", " ".join(f"{round(x):d}" for x in (res.get("tentativas_seg") or [t])))
+
+
+def campos_registro(ex, kp, ini=None, r_crono=None):
+    """Desenha os campos de registro de UM exercício (dentro de um st.form).
+    `kp` = prefixo único das chaves; `ini` = registro já salvo (modo edição).
+    Retorna (resposta, erro)."""
+    ini = ini or {}
+    r_crono = r_crono or {}
+    tipo = tipo_registro(ini or ex)
+    prova_id = ini.get("prova_id", ex.get("prova_id"))
+    resp = {"nome": ex["nome"], "tipo": tipo, "prova_id": prova_id}
+    erro = None
+
+    # Simulado (só aparece ao editar um simulado salvo)
+    if ini.get("tipo") == "simulado":
+        p = (next((x for x in list(provas_ativas) + PROVAS_CBMPE_2026 if x["id"] == prova_id), None)
+             or {"tipo_medida": "repeticoes"})
+        v0 = ini.get("valor")
+        txt0 = "" if v0 is None else (texto_tempo(v0) if p.get("tipo_medida") == "tempo" else
+                                      (f"{v0:g}" if isinstance(v0, (int, float)) else str(v0)))
+        txt = st.text_input("Resultado", value=txt0, key=f"sv_{kp}")
+        v = parse_valor(p, txt)
+        if txt.strip() and v is None:
+            erro = f"{ex['nome']}: valor inválido"
+        resp.update({"tipo": "simulado", "valor": v})
+        return resp, erro
+
+    c1, c2 = st.columns(2)
+    status = c1.segmented_control("Execução", list(STATUS_OPCOES), format_func=STATUS_OPCOES.get,
+                                  default=ini.get("status"), key=f"st_{kp}")
+    sensacao = c2.segmented_control("Como foi", list(SENSACAO_OPCOES), format_func=SENSACAO_OPCOES.get,
+                                    default=ini.get("sensacao"), key=f"se_{kp}")
+
+    if tipo in ("forca", "isometria"):
+        em_seg = tipo == "isometria"
+        lista0 = ini.get("seg_series" if em_seg else "reps_series") or []
+        txt0 = " ".join((f"{x:g}" if em_seg else str(x)) for x in lista0)
+        alvo = f"alvo {ex.get('series')}x {ex.get('reps')}" if ex.get("reps") else ""
+        rotulo = ("Segundos de cada série" if em_seg else "Repetições de cada série") + (f" ({alvo})" if alvo else "")
+        txt = st.text_input(rotulo, value=txt0, key=f"rs_{kp}",
+                            placeholder="ex.: 45 40 35" if em_seg else "ex.: 8 7 6 5",
+                            help="Separe as séries por espaço. O app calcula o total e a melhor série.")
+        if ini and not lista0 and (ini.get("series_realizadas") or ini.get("reps_realizadas")):
+            st.caption(f"Registro antigo: {resumo_series(ini)}. Deixe o campo vazio para manter assim.")
+        lista, err = parse_series(txt, em_segundos=em_seg)
+        if err:
+            erro = f"{ex['nome']}: {err}"
+        elif lista:
+            feitas = [x for x in lista if x > 0]
+            if em_seg:
+                resp.update({"seg_series": lista, "series_realizadas": len(feitas), "tempo_seg": max(lista)})
+            else:
+                resp.update({"reps_series": lista, "series_realizadas": len(feitas), "reps_realizadas": max(lista)})
+        elif ini:  # registro antigo sem detalhe por série: mantém o que já tinha
+            for k in ("series_realizadas", "reps_realizadas", "tempo_seg"):
+                if ini.get(k) is not None:
+                    resp[k] = ini[k]
+        var = st.text_input("Variação/ajuste (opcional)", value=ini.get("variacao", ""), key=f"va_{kp}",
+                            placeholder="ex.: joelhos no chão, com elástico, pés no banco")
+        if var.strip():
+            resp["variacao"] = var.strip()
+    elif tipo == "corrida":
+        c1, c2, c3 = st.columns(3)
+        t0 = ini.get("tempo_seg")
+        dist = c1.number_input("Distância (m)", min_value=0, value=ini.get("distancia_m"), step=50, key=f"dist_{kp}")
+        mi = c2.number_input("Minutos", min_value=0, value=None if t0 is None else int(round(t0)) // 60, step=1, key=f"min_{kp}")
+        se = c3.number_input("Segundos", min_value=0, max_value=59, value=None if t0 is None else int(round(t0)) % 60,
+                             step=1, key=f"seg_{kp}")
+        tempo = (mi or 0) * 60 + (se or 0)
+        resp.update({"distancia_m": dist, "tempo_seg": tempo or None})
+        voltas = r_crono.get("voltas_seg") or ini.get("voltas_seg")
+        if voltas:
+            resp["voltas_seg"] = voltas
+            resp["pista_m"] = r_crono.get("pista_m") or ini.get("pista_m")
+            st.caption(f"🏁 {len(voltas)} voltas de {resp['pista_m']} m: " + " · ".join(fmt_tempo(v) for v in voltas))
+        if dist and tempo:
+            ritmo = tempo / (dist / 1000)
+            st.caption(f"Ritmo médio: {int(ritmo // 60)}:{int(round(ritmo % 60)):02d} min/km")
+    elif tipo == "tempo":
+        dur = st.number_input("Duração realizada (min)", min_value=0, value=ini.get("duracao_min"), step=1, key=f"dur_{kp}")
+        resp["duracao_min"] = dur
+    elif tipo == "cronometrado":
+        t0 = ini.get("tempo_seg")
+        txt = st.text_input("Tempo (ex.: 12.35 ou 1:05)", value="" if t0 is None else texto_tempo(t0), key=f"crono_{kp}")
+        v = parse_tempo(txt)
+        if txt.strip() and v is None:
+            erro = f"{ex['nome']}: tempo inválido"
+        resp["tempo_seg"] = v
+        tent = r_crono.get("tentativas_seg") or ini.get("tentativas_seg")
+        if tent and len(tent) > 1:
+            resp["tentativas_seg"] = tent
+    elif tipo == "distancia":
+        v = st.number_input("Marca (m)", min_value=0.0, value=ini.get("valor_m"), step=0.01, format="%.2f", key=f"distm_{kp}")
+        resp["valor_m"] = v
+
+    if status == "nao_fez":
+        for k in CAMPOS_DE_DADOS + ("series_realizadas", "voltas_seg", "pista_m", "tentativas_seg"):
+            resp.pop(k, None)
+    elif status is None and tem_dados(resp):
+        status = "feito"
+    if status:
+        resp["status"] = status
+    if sensacao:
+        resp["sensacao"] = sensacao
+    return resp, erro
 
 
 def cronometro_do_exercicio(ck, i, ex, rasc):
-    tipo = ex.get("tipo")
+    tipo = tipo_registro(ex)
     modo = "voltas" if tipo == "corrida" else "simples"
     res = _cronometro_componente(
         chave=f"taf_crono_ex_{usuario_input}_{ck}_{i}",
@@ -1317,7 +1501,7 @@ def cronometro_do_exercicio(ck, i, ex, rasc):
         st.session_state["toast"] = "✅ Resultado do cronômetro registrado no formulário abaixo."
         st.rerun()
     r = rasc["resultados"].get(str(i))
-    if r and modo == "simples" and len(r.get("tentativas_seg") or []) > 1:
+    if r and modo == "simples" and tipo != "isometria" and len(r.get("tentativas_seg") or []) > 1:
         st.caption("Tentativas de hoje: " + " · ".join(fmt_tempo(x) for x in r["tentativas_seg"])
                    + " — o formulário ficou com a última; ajuste se quiser outra.")
 
@@ -1374,16 +1558,17 @@ with tab1:
         rasc = rascunho_atual(ck)
         for i_r, r in rasc["resultados"].items():
             if i_r.isdigit() and int(i_r) < len(treino_pendente["exercicios"]):
-                preencher_formulario(ck, int(i_r), treino_pendente["exercicios"][int(i_r)].get("tipo"), r, forcar=False)
+                preencher_formulario(ck, int(i_r), tipo_registro(treino_pendente["exercicios"][int(i_r)]), r, forcar=False)
 
         for i, ex in enumerate(treino_pendente["exercicios"]):
             etiqueta = f" · 🏁 prova: {nomes_provas.get(ex.get('prova_id'), '')}" if ex.get("prova_id") in nomes_provas else ""
             st.markdown(f"**{ex['nome']}** — `{ex.get('series', 1)}x {ex.get('reps', '')}`{etiqueta}")
             if ex.get("detalhes"):
                 st.caption(f"ℹ️ {ex['detalhes']}")
-            if ex.get("tipo") in ("corrida", "cronometrado", "tempo"):
+            if tipo_registro(ex) in ("corrida", "cronometrado", "tempo", "isometria"):
                 ja = " ✅" if str(i) in rasc["resultados"] else ""
-                with st.expander(f"⏱️ Cronômetro deste exercício{ja}", expanded=ex.get("tipo") == "corrida"):
+                dica = " (cada Finalizar = 1 série)" if tipo_registro(ex) == "isometria" else ""
+                with st.expander(f"⏱️ Cronômetro deste exercício{dica}{ja}", expanded=ex.get("tipo") == "corrida"):
                     cronometro_do_exercicio(ck, i, ex, rasc)
 
         st.markdown("---")
@@ -1396,48 +1581,24 @@ with tab1:
             data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today(), format="DD/MM/YYYY")
             rpe = st.slider("Esforço percebido geral (1 = muito leve, 10 = máximo):", 1, 10, 6)
 
-            respostas = []
+            st.caption("Em cada exercício: marque como foi a execução e anote o resultado. "
+                       "Força: repetições de cada série separadas por espaço (ex.: 8 7 6 5).")
+            respostas, erros = [], []
             for i, ex in enumerate(treino_pendente["exercicios"]):
-                tipo = ex.get("tipo", "forca")
                 st.markdown(f"**{ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`")
-                base = {"nome": ex["nome"], "tipo": tipo, "prova_id": ex.get("prova_id")}
-                r_crono = rasc["resultados"].get(str(i)) or {}
-                if tipo == "corrida":
-                    c1, c2, c3 = st.columns(3)
-                    dist = c1.number_input("Distância (m)", min_value=0, value=None, step=50, key=f"dist_{ck}_{i}")
-                    mi = c2.number_input("Minutos", min_value=0, value=None, step=1, key=f"min_{ck}_{i}")
-                    se = c3.number_input("Segundos", min_value=0, max_value=59, value=None, step=1, key=f"seg_{ck}_{i}")
-                    tempo = (mi or 0) * 60 + (se or 0)
-                    resp = {**base, "distancia_m": dist, "tempo_seg": tempo or None}
-                    if r_crono.get("voltas_seg"):
-                        resp["voltas_seg"] = r_crono["voltas_seg"]
-                        resp["pista_m"] = r_crono.get("pista_m")
-                        st.caption(f"🏁 {len(r_crono['voltas_seg'])} voltas de {r_crono.get('pista_m')} m vindas do cronômetro: "
-                                   + " · ".join(fmt_tempo(v) for v in r_crono["voltas_seg"]))
-                    respostas.append(resp)
-                elif tipo == "tempo":
-                    dur = st.number_input("Duração realizada (min)", min_value=0, value=None, step=1, key=f"dur_{ck}_{i}")
-                    respostas.append({**base, "duracao_min": dur})
-                elif tipo == "cronometrado":
-                    txt = st.text_input("Tempo (ex.: 12.35 ou 1:05)", key=f"crono_{ck}_{i}")
-                    resp = {**base, "tempo_seg": parse_tempo(txt)}
-                    if len(r_crono.get("tentativas_seg") or []) > 1:
-                        resp["tentativas_seg"] = r_crono["tentativas_seg"]
-                    respostas.append(resp)
-                elif tipo == "distancia":
-                    v = st.number_input("Marca (m)", min_value=0.0, value=None, step=0.01, format="%.2f", key=f"distm_{ck}_{i}")
-                    respostas.append({**base, "valor_m": v})
-                else:
-                    c1, c2 = st.columns(2)
-                    series_feitas = c1.number_input("Séries completas", min_value=0, value=None, step=1, key=f"ser_{ck}_{i}")
-                    reps_feitas = c2.number_input("Reps na melhor série", min_value=0, value=None, step=1, key=f"reps_{ck}_{i}")
-                    respostas.append({**base, "series_realizadas": series_feitas, "reps_realizadas": reps_feitas})
+                resp, err = campos_registro(ex, f"{ck}_{i}", r_crono=rasc["resultados"].get(str(i)))
+                respostas.append(resp)
+                if err:
+                    erros.append(err)
+                st.divider()
 
             obs = st.text_area("Observações (dores, sensações, condições do dia):")
-            marcar_concluido = st.checkbox("✅ Marcar este treino como REALIZADO", value=False)
-            if st.form_submit_button("💾 Salvar Registro"):
-                if not marcar_concluido:
-                    st.warning("Marque a caixinha de verificação para concluir o treino.")
+            if st.form_submit_button("💾 Salvar e concluir este treino", type="primary", width="stretch"):
+                if erros:
+                    st.error("Corrija antes de salvar:\n\n- " + "\n- ".join(erros))
+                elif not any(tem_dados(r) or r.get("status") for r in respostas):
+                    st.warning("Nada foi preenchido. Se não treinou algum exercício, marque **❌ Não fiz** nele — "
+                               "assim o treino é concluído e a IA sabe o que ficou de fora.")
                 else:
                     data_str = str(data_execucao)
                     treinos[idx_pendente]["concluido"] = True
@@ -1843,17 +2004,97 @@ with tab4:
             st.caption("Esforço sempre em 9–10 é sinal de que a carga está alta demais para esta fase.")
             st.plotly_chart(px.bar(df_rpe.sort_values("data"), x="data", y="rpe", labels={"rpe": "Esforço (1-10)", "data": "Data"}), width="stretch")
 
-        # ---- Histórico detalhado, com exclusão ----
+        # ---- Exercícios de força e isometria (séries de treino) ----
+        linhas_f = []
+        for h in hist:
+            for ex in h.get("exercicios_realizados") or []:
+                if ex.get("tipo") not in ("forca", "isometria") or ex.get("status") == "nao_fez":
+                    continue
+                if ex.get("seg_series"):
+                    melhor, total, un = max(ex["seg_series"]), sum(ex["seg_series"]), "segundos"
+                elif ex.get("reps_series"):
+                    melhor, total, un = max(ex["reps_series"]), sum(ex["reps_series"]), "repetições"
+                elif ex.get("reps_realizadas"):
+                    melhor, total, un = ex["reps_realizadas"], None, "repetições"  # registro antigo
+                else:
+                    continue
+                nome_base = re.sub(r"\s*\(.*?\)", "", ex.get("nome", "")).strip() or ex.get("nome", "")
+                linhas_f.append({"data": h.get("data"), "exercicio": nome_base, "Melhor série": melhor,
+                                 "Total": total, "un": un, "detalhe": resumo_series(ex),
+                                 "execução": etiquetas_execucao(ex) or "—"})
+        if linhas_f:
+            st.subheader("💪 Evolução nos exercícios de força")
+            df_f = pd.DataFrame(linhas_f)
+            df_f["data"] = pd.to_datetime(df_f["data"])
+            ordem_ex = df_f["exercicio"].value_counts().index.tolist()
+            ex_sel = st.selectbox("Exercício:", ordem_ex,
+                                  format_func=lambda n: f"{n} ({int((df_f['exercicio'] == n).sum())} registro(s))")
+            d_f = df_f[df_f["exercicio"] == ex_sel].sort_values("data")
+            un = d_f["un"].iloc[-1]
+            colunas_y = ["Melhor série"] + (["Total"] if d_f["Total"].notna().any() else [])
+            longo = d_f.melt(id_vars=["data", "detalhe", "execução"], value_vars=colunas_y,
+                             var_name="medida", value_name="valor").dropna(subset=["valor"])
+            fig_f = px.line(longo, x="data", y="valor", color="medida", markers=True,
+                            hover_data={"detalhe": True, "execução": True},
+                            labels={"valor": un, "data": "Data", "medida": ""})
+            st.plotly_chart(fig_f, width="stretch")
+            st.caption("**Melhor série** mostra sua força máxima; **Total** (soma das séries) mostra a resistência. "
+                       "Registros antigos só têm a melhor série.")
+
+        # ---- Histórico detalhado, com edição e exclusão ----
         st.subheader("🔍 Histórico detalhado")
         ordem = sorted(range(len(hist)), key=lambda i: str(hist[i].get("data")), reverse=True)
         for i in ordem:
             item = hist[i]
-            with st.expander(f"{item.get('data')} — {item.get('treino', '')}"):
+            editando = st.session_state.get("edit_hist") == i
+            with st.expander(f"{item.get('data')} — {item.get('treino', '')}", expanded=editando):
+                if editando:
+                    with st.form(f"form_edit_hist_{i}"):
+                        st.markdown("**✏️ Editando registro**")
+                        try:
+                            data0 = datetime.date.fromisoformat(str(item.get("data")))
+                        except ValueError:
+                            data0 = datetime.date.today()
+                        nova_data = st.date_input("Data", value=data0, format="DD/MM/YYYY", key=f"ed_data_{i}")
+                        novo_rpe = item.get("rpe")
+                        if item.get("tipo_registro") != "simulado":
+                            novo_rpe = st.slider("Esforço percebido geral", 1, 10, int(item.get("rpe") or 6), key=f"ed_rpe_{i}")
+                        novos, erros_ed = [], []
+                        for j, ex in enumerate(item.get("exercicios_realizados") or []):
+                            st.markdown(f"**{ex.get('nome', 'Exercício')}**")
+                            resp, err = campos_registro({"nome": ex.get("nome", "Exercício")}, f"ed{i}_{j}", ini=ex)
+                            geridos = set(CAMPOS_DE_DADOS) | {"series_realizadas", "status", "sensacao", "variacao",
+                                                              "voltas_seg", "pista_m", "tentativas_seg"}
+                            # Mantém qualquer outra informação que já existia no registro.
+                            novos.append({**{k: v for k, v in ex.items() if k not in geridos}, **resp})
+                            if err:
+                                erros_ed.append(err)
+                        nova_obs = st.text_area("Observações", value=item.get("obs") or "", key=f"ed_obs_{i}")
+                        c_s, c_c = st.columns(2)
+                        salvar_ed = c_s.form_submit_button("💾 Salvar alterações", type="primary")
+                        cancelar_ed = c_c.form_submit_button("↩️ Cancelar")
+                    if cancelar_ed:
+                        st.session_state.pop("edit_hist", None)
+                        st.rerun()
+                    if salvar_ed:
+                        if erros_ed:
+                            st.error("Corrija antes de salvar:\n\n- " + "\n- ".join(erros_ed))
+                        else:
+                            item.update({"data": str(nova_data), "rpe": novo_rpe, "exercicios_realizados": novos,
+                                         "obs": nova_obs, "editado_em": agora_iso()})
+                            if salvar():
+                                st.session_state.pop("edit_hist", None)
+                                st.session_state["toast"] = "✅ Registro atualizado."
+                                st.rerun()
+                    continue
+
                 if item.get("rpe"):
                     st.caption(f"Esforço: {item['rpe']}/10")
                 linhas_ex = []
                 for ex in item.get("exercicios_realizados") or []:
-                    if ex.get("valor") is not None and ex.get("prova_id"):
+                    if ex.get("status") == "nao_fez":
+                        resultado = "não feito"
+                    elif ex.get("valor") is not None and ex.get("prova_id"):
                         p = next((x for x in provas_ativas if x["id"] == ex["prova_id"]), {"tipo_medida": "repeticoes"})
                         resultado = fmt_valor(p, ex["valor"])
                     elif ex.get("tipo") == "corrida":
@@ -1865,15 +2106,23 @@ with tab4:
                     elif ex.get("tipo") == "distancia":
                         resultado = f"{ex.get('valor_m') or '—'} m"
                     else:
-                        resultado = f"{ex.get('series_realizadas') or '—'} séries · melhor série {ex.get('reps_realizadas') or '—'} reps"
-                    linhas_ex.append({"Exercício": ex.get("nome"), "Resultado": resultado})
+                        resultado = resumo_series(ex)
+                    linhas_ex.append({"Exercício": ex.get("nome"), "Resultado": resultado,
+                                      "Execução": etiquetas_execucao(ex) or "—"})
                 if linhas_ex:
-                    st.dataframe(pd.DataFrame(linhas_ex), hide_index=True, width="stretch")
+                    df_ex_h = pd.DataFrame(linhas_ex)
+                    if (df_ex_h["Execução"] == "—").all():
+                        df_ex_h = df_ex_h.drop(columns=["Execução"])
+                    st.dataframe(df_ex_h, hide_index=True, width="stretch")
                 if item.get("obs"):
                     st.caption(f"📝 {item['obs']}")
                 chave = f"conf_del_hist_{i}"
                 if not st.session_state.get(chave):
-                    if st.button("🗑️ Apagar este registro", key=f"del_hist_{i}"):
+                    c_e, c_d = st.columns(2)
+                    if c_e.button("✏️ Editar", key=f"edit_hist_btn_{i}"):
+                        st.session_state["edit_hist"] = i
+                        st.rerun()
+                    if c_d.button("🗑️ Apagar este registro", key=f"del_hist_{i}"):
                         st.session_state[chave] = True
                         st.rerun()
                 else:
@@ -1882,6 +2131,7 @@ with tab4:
                     if c_s.button("✅ Sim, apagar", key=f"sim_del_{i}"):
                         del hist[i]
                         st.session_state[chave] = False
+                        st.session_state.pop("edit_hist", None)
                         if salvar():
                             st.rerun()
                     if c_n.button("↩️ Cancelar", key=f"nao_del_{i}"):
