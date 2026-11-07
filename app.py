@@ -668,6 +668,67 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
     return "\n".join(linhas) if linhas else "Sem registros ainda."
 
 
+# -----------------------------------------------------------------------
+# SIMULADO DO TAF (07/11/2026): quando fazer e em que ordem
+# -----------------------------------------------------------------------
+ORDEM_SIMULADO = ["barra_dinamica", "barra_isometria", "shuttle_run", "natacao_100m",
+                  "flexao_abdominal", "salto_horizontal", "corrida_2400m"]
+
+
+def provas_na_ordem_do_simulado(provas):
+    """Ordem do edital (1º dia e depois 2º dia), tudo num dia só; a corrida de 2.400 m fica por último."""
+    def chave(p):
+        if p["id"] in ORDEM_SIMULADO:
+            return ORDEM_SIMULADO.index(p["id"])
+        return ORDEM_SIMULADO.index("corrida_2400m") - 0.5  # provas extras: antes da corrida longa
+    return sorted(provas, key=chave)
+
+
+def _data(txt):
+    try:
+        return datetime.date.fromisoformat(str(txt)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def status_simulado(historico, config, hoje=None):
+    """Decide se hoje é um bom dia para o simulado.
+    Regras (sugestão de treino, não do edital): 1º simulado logo (ponto de partida);
+    depois a cada 4 semanas (a cada 2 nas últimas 6 semanas antes do TAF); nunca nos
+    6 dias antes da prova; e só depois de um dia sem treino, para medir sua capacidade real."""
+    hoje = hoje or datetime.date.today()
+    historico = historico or []
+    sims = sorted(d for d in (_data(h.get("data")) for h in historico if h.get("tipo_registro") == "simulado") if d)
+    treinos = sorted(d for d in (_data(h.get("data")) for h in historico if h.get("tipo_registro") != "simulado") if d)
+    data_taf = _data((config or {}).get("data_taf"))
+    dias_taf = (data_taf - hoje).days if data_taf else None
+
+    if dias_taf is not None and 0 <= dias_taf <= 6:
+        return {"situacao": "perto_prova", "proximo": None,
+                "msg": f"Faltam {dias_taf} dia(s) para o TAF: não faça simulado agora. Treine leve e chegue descansado."}
+    intervalo = 14 if dias_taf is not None and dias_taf <= 42 else 28
+    proximo = hoje if not sims else sims[-1] + datetime.timedelta(days=intervalo)
+    if data_taf and dias_taf is not None and dias_taf > 6 and (data_taf - proximo).days < 7:
+        proximo = data_taf - datetime.timedelta(days=10)  # último simulado ~10 dias antes da prova
+        if sims and (proximo - sims[-1]).days < 7:
+            return {"situacao": "em_dia", "proximo": None,
+                    "msg": "Último simulado já feito. Agora é manter o treino e chegar descansado ao TAF."}
+    primeiro = not sims
+    if proximo > hoje:
+        return {"situacao": "em_dia", "proximo": proximo,
+                "msg": f"Próximo simulado sugerido a partir de {proximo:%d/%m/%Y}."}
+    ultimo_treino = treinos[-1] if treinos else None
+    if ultimo_treino and (hoje - ultimo_treino).days < 2:
+        livre = ultimo_treino + datetime.timedelta(days=2)
+        quando = "amanhã" if livre == hoje + datetime.timedelta(days=1) else f"em {livre:%d/%m}"
+        return {"situacao": "pendente", "proximo": livre,
+                "msg": (f"{'Primeiro simulado' if primeiro else 'Simulado'} pendente. Faça depois de um dia sem treino: "
+                        f"se não treinar até lá, {quando} será um bom dia.")}
+    return {"situacao": "hoje", "proximo": hoje,
+            "msg": ("📣 Hoje é um bom dia para o seu PRIMEIRO simulado do TAF — ele vira seu ponto de partida."
+                    if primeiro else "📣 Hoje é um bom dia para o simulado do TAF.")}
+
+
 def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisico, config, historico, ciclo_id,
                                ciclo_resumo=None, medidas=None):
     """Chama a IA para montar o plano do ciclo (semana) `ciclo_id`. Retorna (plano, erro).
@@ -703,6 +764,9 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
 
     {descrever_perfil_fisico(perfil_fisico)}
     {descrever_medidas(medidas)}
+    Simulado do TAF (o aluno faz à parte, todas as provas num dia só): {status_simulado(historico, config)["msg"]}
+    Se o simulado estiver pendente ou previsto para esta semana, deixe a semana um pouco mais leve e NÃO programe
+    treino pesado de pernas ou corrida intensa no dia anterior; o simulado substitui um treino forte da semana.
     Observações do aluno: {config.get('observacoes') or 'nenhuma'}
     {natacao}
 
@@ -1370,6 +1434,159 @@ def preencher_formulario(ck, i, tipo, res, forcar):
         setar(f"rs_{ck}_{i}", " ".join(f"{round(x):d}" for x in (res.get("tentativas_seg") or [t])))
 
 
+def _melhor(p, valores):
+    valores = [v for v in valores if v is not None]
+    if not valores:
+        return None
+    return max(valores) if p.get("melhor") == "maior" else min(valores)
+
+
+def _texto_valor(p, v):
+    if v is None:
+        return ""
+    if p.get("tipo_medida") == "tempo":
+        return texto_tempo(v)
+    if p.get("tipo_medida") == "distancia":
+        return f"{v:.2f}".replace(".", ",")
+    return str(int(round(v)))
+
+
+def _distancia_meta(p, v, meta):
+    if v is None or meta is None:
+        return ""
+    if atingiu(p, v, meta):
+        return "✅ índice atingido"
+    falta = abs(meta - v)
+    if p.get("tipo_medida") == "tempo":
+        return f"faltam {fmt_tempo(falta)} para o índice"
+    if p.get("tipo_medida") == "distancia":
+        return f"faltam {falta:.2f} m para o índice".replace(".", ",")
+    return f"faltam {int(round(falta))} reps para o índice"
+
+
+def secao_simulado(sim, provas):
+    """Simulado guiado: todas as provas num dia só, na ordem do edital."""
+    sim.setdefault("resultados", {})
+    sim.setdefault("ids", [])
+    st.subheader("🏁 Simulado do TAF em andamento")
+    st.caption("Tudo num dia só, na ordem do edital, com a corrida de 2.400 m por último. Sugestão (não é regra do "
+               "edital): aqueça por 10 min antes e descanse uns 5 min entre as provas. Faça como no dia da prova.")
+    for n, p in enumerate(provas_na_ordem_do_simulado(provas), start=1):
+        pid = p["id"]
+        meta = meta_para(p, sexo_usuario)
+        res = sim["resultados"].get(pid) or {}
+        tent = res.get("tentativas") or []
+        melhor = res.get("valor")
+        n_tent = 2 if int(p.get("tentativas") or 1) >= 2 else 1
+        with st.container(border=True):
+            feito = f" — **{fmt_valor(p, melhor)}**" if melhor is not None else ""
+            st.markdown(f"**{n}. {p['nome']}** · índice: `{meta_texto(p, meta)}`{feito}")
+            if melhor is not None:
+                st.caption(_distancia_meta(p, melhor, meta))
+            if p.get("observacao"):
+                st.caption(f"📏 Como é na prova: {p['observacao']}")
+            if n_tent == 2:
+                st.caption("Na prova são 2 tentativas, com no mínimo 5 min entre elas; vale a melhor.")
+
+            # Cronômetro (provas de tempo)
+            if p.get("tipo_medida") == "tempo":
+                modo = "voltas" if pid == "corrida_2400m" else "simples"
+                r = _cronometro_componente(
+                    chave=f"taf_sim_{usuario_input}_{sim.get('id')}_{pid}", modo=modo,
+                    titulo="🏃 Cronômetro de voltas" if modo == "voltas" else "⏱️ Cronômetro",
+                    usuario=usuario_input, pista=400, alvo=2400 if modo == "voltas" else None,
+                    confirmados=sim["ids"][-30:], key=f"simcomp_{sim.get('id')}_{pid}", default=None,
+                )
+                if isinstance(r, dict) and r.get("id") and r["id"] not in sim["ids"]:
+                    sim["ids"] = (sim["ids"] + [r["id"]])[-30:]
+                    if r.get("tempo_seg"):
+                        novas = (tent + [r["tempo_seg"]])[-n_tent:] if n_tent == 2 else [r["tempo_seg"]]
+                        novo = {"tentativas": novas, "valor": _melhor(p, novas)}
+                        if r.get("voltas_seg"):
+                            novo.update({"voltas_seg": r["voltas_seg"], "pista_m": r.get("pista_m"),
+                                         "distancia_m": r.get("distancia_m")})
+                        sim["resultados"][pid] = novo
+                    dados_usuario["simulado_andamento"] = sim
+                    salvar()
+                    st.session_state["toast"] = f"✅ {p['nome']}: resultado anotado."
+                    st.rerun()
+
+            # Anotar / corrigir à mão
+            with st.form(f"form_sim_{sim.get('id')}_{pid}"):
+                dica = {"tempo": "tempo, ex.: 12:50 ou 11.80", "distancia": "metros, ex.: 1,65"}.get(p.get("tipo_medida"),
+                                                                                                    "repetições")
+                cols = st.columns(n_tent)
+                txts = []
+                for k in range(n_tent):
+                    rot = f"{k + 1}ª tentativa ({dica})" if n_tent == 2 else f"Resultado ({dica})"
+                    txts.append(cols[k].text_input(rot, value=_texto_valor(p, tent[k]) if k < len(tent) else "",
+                                                   key=f"simtxt_{sim.get('id')}_{pid}_{k}"))
+                if st.form_submit_button("💾 Anotar resultado"):
+                    vals = [parse_valor(p, t) for t in txts]
+                    invalidos = [t for t, v in zip(txts, vals) if t.strip() and v is None]
+                    if invalidos:
+                        st.error(f"Valor inválido: {', '.join(invalidos)}")
+                    else:
+                        validos = [v for v in vals if v is not None]
+                        if validos:
+                            sim["resultados"][pid] = {**res, "tentativas": validos, "valor": _melhor(p, validos)}
+                        else:
+                            sim["resultados"].pop(pid, None)
+                        dados_usuario["simulado_andamento"] = sim
+                        if salvar():
+                            st.rerun()
+
+    feitos = {pid: r for pid, r in sim["resultados"].items() if r.get("valor") is not None}
+    st.markdown(f"**{len(feitos)} de {len(provas)} provas anotadas.**")
+    with st.form(f"form_fim_sim_{sim.get('id')}"):
+        data_sim = st.date_input("Data do simulado", value=_data(sim.get("inicio")) or datetime.date.today(),
+                                 format="DD/MM/YYYY")
+        obs_sim = st.text_area("Observações (como se sentiu, clima, piso da pista...)")
+        c_f, c_d = st.columns(2)
+        finalizar = c_f.form_submit_button("✅ Finalizar simulado", type="primary")
+        descartar = c_d.form_submit_button("🗑️ Descartar simulado")
+    if descartar:
+        st.session_state["conf_descartar_sim"] = True
+    if st.session_state.get("conf_descartar_sim"):
+        st.warning("Descartar este simulado? Os resultados anotados serão perdidos.")
+        c_s, c_n = st.columns(2)
+        if c_s.button("✅ Sim, descartar"):
+            dados_usuario.pop("simulado_andamento", None)
+            st.session_state.pop("conf_descartar_sim", None)
+            if salvar():
+                st.rerun()
+        if c_n.button("↩️ Continuar o simulado"):
+            st.session_state.pop("conf_descartar_sim", None)
+            st.rerun()
+    if finalizar:
+        if not feitos:
+            st.warning("Anote o resultado de pelo menos uma prova antes de finalizar.")
+            return
+        exs, resumo = [], []
+        for p in provas_na_ordem_do_simulado(provas):
+            r = feitos.get(p["id"])
+            if not r:
+                continue
+            ex = {"nome": p["nome"], "tipo": "simulado", "prova_id": p["id"], "valor": r["valor"]}
+            for k in ("tentativas", "voltas_seg", "pista_m", "distancia_m"):
+                if r.get(k):
+                    ex[k] = r[k]
+            exs.append(ex)
+            meta = meta_para(p, sexo_usuario)
+            resumo.append({"Prova": p["nome"], "Resultado": fmt_valor(p, r["valor"]), "Índice": meta_texto(p, meta),
+                           "Situação": _distancia_meta(p, r["valor"], meta) or "—"})
+        dados_usuario["historico_evolucoes"].append({
+            "data": str(data_sim), "edital": dados_usuario.get("edital_ativo"),
+            "cargo": dados_usuario.get("cargo_ativo"), "treino": "Simulado TAF",
+            "ciclo_id": (dados_usuario.get("plano_semanal") or {}).get("ciclo_id", 1),
+            "tipo_registro": "simulado", "rpe": None, "exercicios_realizados": exs, "obs": obs_sim,
+        })
+        dados_usuario.pop("simulado_andamento", None)
+        if salvar():
+            st.session_state["resultado_simulado"] = resumo
+            st.rerun()
+
+
 def campos_registro(ex, kp, ini=None, r_crono=None):
     """Desenha os campos de registro de UM exercício (dentro de um st.form).
     `kp` = prefixo único das chaves; `ini` = registro já salvo (modo edição).
@@ -1522,6 +1739,27 @@ with tab1:
     if st.session_state.get("msg_ciclo"):
         st.success(st.session_state.pop("msg_ciclo"))
 
+    # ---- Simulado do TAF: aviso automático e modo guiado ----
+    if st.session_state.get("resultado_simulado"):
+        st.success("🏁 Simulado salvo! Veja como você está em relação aos índices:")
+        st.dataframe(pd.DataFrame(st.session_state.pop("resultado_simulado")), hide_index=True, width="stretch")
+        st.caption("A evolução de cada prova aparece em '📊 Minha Evolução'.")
+    sim_andamento = dados_usuario.get("simulado_andamento")
+    if provas_ativas and isinstance(sim_andamento, dict):
+        secao_simulado(sim_andamento, provas_ativas)
+        st.markdown("---")
+    elif provas_ativas:
+        st_sim = status_simulado(dados_usuario.get("historico_evolucoes"), cfg)
+        if st_sim["situacao"] == "hoje":
+            st.success(st_sim["msg"])
+            if st.button("🏁 Começar o simulado agora", type="primary"):
+                dados_usuario["simulado_andamento"] = {"id": datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+                                                       "inicio": str(datetime.date.today()), "resultados": {}, "ids": []}
+                if salvar():
+                    st.rerun()
+        elif st_sim["situacao"] in ("pendente", "perto_prova"):
+            st.info(f"🏁 {st_sim['msg']}")
+
     if medida_da_semana_pendente():
         with st.expander("⚖️ Hora de registrar suas medidas da semana (peso, cintura, FC de repouso)"):
             form_medidas("hoje")
@@ -1625,41 +1863,19 @@ with tab1:
                     else:
                         st.error("O registro NÃO foi salvo na nuvem (veja o erro na barra lateral). Tente de novo antes de sair.")
 
-    # ---- Simulado completo do TAF ----
-    if provas_ativas:
+    # ---- Simulado do TAF a qualquer momento (ou para anotar um já feito) ----
+    if provas_ativas and not isinstance(dados_usuario.get("simulado_andamento"), dict):
         st.markdown("---")
-        with st.expander("🏁 Registrar simulado do TAF (sugestão: a cada 4 semanas)"):
-            st.caption("Faça como no dia da prova. Deixe em branco as provas que não fez.")
-            with st.form("form_simulado"):
-                data_sim = st.date_input("Data do simulado", value=datetime.date.today(), format="DD/MM/YYYY", key="data_sim")
-                valores = {}
-                for p in provas_ativas:
-                    meta = meta_para(p, sexo_usuario)
-                    rotulo = f"{p['nome']} (meta: {meta_texto(p, meta)})"
-                    if p["tipo_medida"] == "tempo":
-                        valores[p["id"]] = st.text_input(rotulo + " — tempo, ex.: 12:50 ou 11.80", key=f"sim_{p['id']}")
-                    else:
-                        valores[p["id"]] = st.text_input(rotulo + (" — metros, ex.: 1,65" if p["tipo_medida"] == "distancia" else " — repetições"), key=f"sim_{p['id']}")
-                obs_sim = st.text_area("Observações do simulado", key="obs_sim")
-                if st.form_submit_button("💾 Salvar Simulado"):
-                    exs = []
-                    for p in provas_ativas:
-                        v = parse_valor(p, valores[p["id"]])
-                        if v is not None:
-                            exs.append({"nome": p["nome"], "tipo": "simulado", "prova_id": p["id"], "valor": v})
-                    if not exs:
-                        st.warning("Nenhum valor válido preenchido.")
-                    else:
-                        dados_usuario["historico_evolucoes"].append({
-                            "data": str(data_sim), "edital": dados_usuario.get("edital_ativo"),
-                            "cargo": dados_usuario.get("cargo_ativo"), "treino": "Simulado TAF",
-                            # Vincula o simulado à semana atual para a IA avaliá-lo na virada da semana.
-                            "ciclo_id": plano.get("ciclo_id", 1),
-                            "tipo_registro": "simulado", "rpe": None, "exercicios_realizados": exs, "obs": obs_sim,
-                        })
-                        if salvar():
-                            st.session_state["msg_ciclo"] = f"Simulado salvo com {len(exs)} prova(s)! Veja em '📊 Minha Evolução'."
-                            st.rerun()
+        with st.expander("🏁 Simulado do TAF"):
+            st_sim = status_simulado(dados_usuario.get("historico_evolucoes"), cfg)
+            st.caption(st_sim["msg"])
+            st.caption("O app avisa sozinho, no topo desta aba, quando for um bom dia. Você também pode começar agora "
+                       "ou usar este modo para anotar um simulado que já fez (a data é escolhida no final).")
+            if st.button("🏁 Começar simulado", key="comecar_sim_manual"):
+                dados_usuario["simulado_andamento"] = {"id": datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
+                                                       "inicio": str(datetime.date.today()), "resultados": {}, "ids": []}
+                if salvar():
+                    st.rerun()
 
 # -----------------------------------------------------------------------
 # TAB 2: CRONOGRAMA (visualização + edição manual)
