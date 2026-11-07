@@ -305,6 +305,17 @@ def etiquetas_execucao(ex):
     return " · ".join(partes)
 
 
+def eixo_datas(fig, datas):
+    """Datas no formato dd/mm/aa (sem horários estranhos quando há poucos pontos)."""
+    u = sorted(pd.to_datetime(pd.Series(list(datas))).dropna().dt.normalize().unique())
+    if 0 < len(u) <= 8:
+        fig.update_xaxes(tickvals=u, ticktext=[pd.Timestamp(d).strftime("%d/%m/%y") for d in u])
+    else:
+        fig.update_xaxes(tickformat="%d/%m/%y")
+    fig.update_xaxes(hoverformat="%d/%m/%Y")
+    return fig
+
+
 def meta_texto(prova, meta):
     return "—" if meta is None else fmt_valor(prova, meta)
 
@@ -655,7 +666,10 @@ def resumo_ciclo_para_ia(historico, ciclo_id):
                 partes.append(f"{ex['nome']}: {resumo_series(ex)}{tags}")
             elif ex.get("tipo") == "corrida" and ex.get("distancia_m"):
                 txt = f"{ex['nome']}: {ex['distancia_m']}m em {fmt_tempo(ex.get('tempo_seg'))}"
-                if ex.get("voltas_seg"):
+                if ex.get("tiros_seg"):
+                    txt = (f"{ex['nome']}: {len(ex['tiros_seg'])} tiros de {ex.get('dist_tiro_m') or '?'} m "
+                           f"(só tempo correndo): " + ", ".join(fmt_tempo(v) for v in ex["tiros_seg"]))
+                elif ex.get("voltas_seg"):
                     txt += (f" (voltas de {ex.get('pista_m') or '?'} m: "
                             + ", ".join(fmt_tempo(v) for v in ex["voltas_seg"]) + ")")
                 partes.append(txt + tags)
@@ -732,6 +746,71 @@ def status_simulado(historico, config, hoje=None):
                     if primeiro else "📣 Hoje é um bom dia para o simulado do TAF.")}
 
 
+def analise_provas(historico, provas, sexo, data_taf=None):
+    """Para cada prova: valor atual, distância até o índice (%) e projeção simples
+    (tendência em linha reta dos últimos registros). Ordena da mais distante para a mais perto."""
+    df = linhas_por_prova(historico or [], provas)
+    if not df.empty:
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df = df.dropna(subset=["data"])
+    data_taf = _data(data_taf) if data_taf else None
+    saida = []
+    for p in provas:
+        meta = meta_para(p, sexo)
+        maior = p.get("melhor") == "maior"
+        d = df[df["prova_id"] == p["id"]] if not df.empty else df
+        item = {"prova": p, "meta": meta, "atual": None, "gap": None, "projecao": "Sem registro ainda."}
+        if d.empty or meta in (None, 0):
+            saida.append(item)
+            continue
+        # melhor valor de cada dia
+        por_dia = (d.groupby("data")["valor"].max() if maior else d.groupby("data")["valor"].min()).sort_index()
+        atual = float(por_dia.iloc[-1])
+        gap = (meta - atual) / meta if maior else (atual - meta) / meta
+        item.update({"atual": atual, "gap": gap})
+        if atingiu(p, atual, meta):
+            item["projecao"] = "✅ Índice já atingido — agora é manter."
+        else:
+            pts = por_dia.iloc[-6:]
+            dias = (pts.index - pts.index[0]).days.values.astype(float)
+            if len(pts) < 2 or dias[-1] < 14:
+                item["projecao"] = "Projeção a partir de 2 registros com pelo menos 2 semanas de intervalo."
+            else:
+                n = len(dias)
+                mx, my = dias.mean(), pts.values.mean()
+                cov = ((dias - mx) * (pts.values - my)).sum()
+                var = ((dias - mx) ** 2).sum()
+                inclinacao = cov / var if var else 0.0
+                melhorando = inclinacao > 0 if maior else inclinacao < 0
+                if not melhorando or abs(inclinacao) < 1e-9:
+                    item["projecao"] = "⚠️ Sem melhora nos últimos registros — vale rever o treino desta prova."
+                else:
+                    faltam_dias = (meta - atual) / inclinacao
+                    quando = pts.index[-1].date() + datetime.timedelta(days=int(round(faltam_dias)))
+                    if data_taf and quando > data_taf:
+                        item["projecao"] = (f"⚠️ No ritmo atual, chegaria ao índice só por volta de {quando:%m/%Y} — "
+                                            f"depois do TAF ({data_taf:%d/%m/%Y}). Precisa acelerar.")
+                    else:
+                        item["projecao"] = f"📈 No ritmo atual, índice por volta de {quando:%m/%Y}."
+        saida.append(item)
+    saida.sort(key=lambda x: (x["gap"] is None, -(x["gap"] or 0)))
+    return saida
+
+
+def texto_prioridades(analise):
+    linhas = []
+    for k, a in enumerate([x for x in analise if x["gap"] is not None], start=1):
+        p = a["prova"]
+        situacao = "índice atingido" if a["gap"] <= 0 else f"faltam {a['gap'] * 100:.0f}% para o índice"
+        linhas.append(f"{k}. {p['nome']}: atual {fmt_valor(p, a['atual'])}, índice {meta_texto(p, a['meta'])} ({situacao})")
+    sem = [a["prova"]["nome"] for a in analise if a["gap"] is None]
+    txt = ("Prioridades pelos últimos resultados (mais longe do índice primeiro):\n" + "\n".join(linhas)) if linhas else \
+        "Prioridades: ainda não há resultados das provas (o 1º simulado vai mostrar)."
+    if sem:
+        txt += "\nProvas ainda sem resultado: " + ", ".join(sem) + "."
+    return txt
+
+
 def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisico, config, historico, ciclo_id,
                                ciclo_resumo=None, medidas=None):
     """Chama a IA para montar o plano do ciclo (semana) `ciclo_id`. Retorna (plano, erro).
@@ -767,6 +846,9 @@ def gerar_treino_personalizado(edital, cargo, descricao_taf, provas, perfil_fisi
 
     {descrever_perfil_fisico(perfil_fisico)}
     {descrever_medidas(medidas)}
+    {texto_prioridades(analise_provas(historico, provas, sexo, config.get("data_taf")))}
+    Dê mais volume e atenção às 1 ou 2 provas mais distantes do índice, sem abandonar as demais;
+    nas provas com índice já atingido, faça só manutenção.
     Simulado do TAF (o aluno faz à parte, todas as provas num dia só): {status_simulado(historico, config)["msg"]}
     Se o simulado estiver pendente ou previsto para esta semana, deixe a semana um pouco mais leve e NÃO programe
     treino pesado de pernas ou corrida intensa no dia anterior; o simulado substitui um treino forte da semana.
@@ -1401,6 +1483,24 @@ def form_medidas(sufixo):
 # Os resultados ficam num "rascunho" salvo na nuvem até você salvar o treino,
 # então nada se perde se o app recarregar no meio do treino.
 # -----------------------------------------------------------------------
+def eh_tiros(ex):
+    """Treino intervalado (vários tiros com descanso): ex. '5x tiros de 400 m'."""
+    if (ex.get("tipo") or "") != "corrida":
+        return False
+    n = sem_acento(f"{ex.get('nome', '')} {ex.get('reps', '')}")
+    try:
+        series = int(ex.get("series") or 1)
+    except (TypeError, ValueError):
+        series = 1
+    return "tiro" in n or "intervalad" in n or "sprint" in n or series > 1
+
+
+def distancia_do_tiro(ex):
+    m = re.search(r"(\d{2,4})\s*m\b", f"{ex.get('nome', '')} {ex.get('reps', '')}")
+    v = int(m.group(1)) if m else 400
+    return v if 20 <= v <= 5000 else 400
+
+
 def alvo_corrida(ex):
     """Sugere a meta de distância da corrida a partir do exercício (ex.: '2.400 m')."""
     if ex.get("prova_id") == "corrida_2400m":
@@ -1668,6 +1768,15 @@ def campos_registro(ex, kp, ini=None, r_crono=None):
                              step=1, key=f"seg_{kp}")
         tempo = (mi or 0) * 60 + (se or 0)
         resp.update({"distancia_m": dist, "tempo_seg": tempo or None})
+        tiros = r_crono.get("tiros_seg") or ini.get("tiros_seg")
+        if tiros:
+            resp["tiros_seg"] = tiros
+            resp["dist_tiro_m"] = r_crono.get("dist_tiro_m") or ini.get("dist_tiro_m")
+            desc = r_crono.get("descansos_seg") or ini.get("descansos_seg")
+            if desc:
+                resp["descansos_seg"] = desc
+            st.caption(f"⚡ {len(tiros)} tiros de {resp['dist_tiro_m']} m (só o tempo correndo): "
+                       + " · ".join(fmt_tempo(v) for v in tiros))
         voltas = r_crono.get("voltas_seg") or ini.get("voltas_seg")
         if voltas:
             resp["voltas_seg"] = voltas
@@ -1694,7 +1803,8 @@ def campos_registro(ex, kp, ini=None, r_crono=None):
         resp["valor_m"] = v
 
     if status == "nao_fez":
-        for k in CAMPOS_DE_DADOS + ("series_realizadas", "voltas_seg", "pista_m", "tentativas_seg"):
+        for k in CAMPOS_DE_DADOS + ("series_realizadas", "voltas_seg", "pista_m", "tentativas_seg", "tiros_seg",
+                                    "dist_tiro_m", "descansos_seg"):
             resp.pop(k, None)
     elif status is None and tem_dados(resp):
         status = "feito"
@@ -1707,14 +1817,20 @@ def campos_registro(ex, kp, ini=None, r_crono=None):
 
 def cronometro_do_exercicio(ck, i, ex, rasc):
     tipo = tipo_registro(ex)
-    modo = "voltas" if tipo == "corrida" else "simples"
+    modo = ("tiros" if eh_tiros(ex) else "voltas") if tipo == "corrida" else "simples"
+    try:
+        qtd = int(ex.get("series") or 0)
+    except (TypeError, ValueError):
+        qtd = 0
     res = _cronometro_componente(
         chave=f"taf_crono_ex_{usuario_input}_{ck}_{i}",
         modo=modo,
-        titulo="🏃 Cronômetro de voltas" if modo == "voltas" else "⏱️ Cronômetro deste exercício",
+        titulo={"voltas": "🏃 Cronômetro de voltas", "tiros": "⚡ Cronômetro de tiros"}.get(modo, "⏱️ Cronômetro deste exercício"),
         usuario=usuario_input,
         pista=400,
         alvo=alvo_corrida(ex) if modo == "voltas" else None,
+        dist_tiro=distancia_do_tiro(ex) if modo == "tiros" else None,
+        qtd=qtd if modo == "tiros" and qtd > 1 else None,
         confirmados=rasc["ids"][-30:],
         key=f"cronoex_{ck}_{i}",
         default=None,
@@ -1751,6 +1867,14 @@ with tab1:
     st.header("🎯 Treino de Hoje")
     if st.session_state.get("msg_ciclo"):
         st.success(st.session_state.pop("msg_ciclo"))
+
+    # ---- Lembrete do atestado cardiológico (item 14.4, c, do edital) ----
+    if cfg.get("data_taf"):
+        _taf = _data(cfg["data_taf"])
+        if _taf and 0 <= (_taf - datetime.date.today()).days <= 50:
+            st.warning(f"🩺 **Atestado médico:** o edital exige atestado de cardiologista (com RQE) emitido nos 30 dias "
+                       f"anteriores aos testes (item 14.4, c). Para o TAF em {_taf:%d/%m/%Y}, a consulta deve ser a partir "
+                       f"de **{_taf - datetime.timedelta(days=30):%d/%m/%Y}**. Confira a data na sua convocação.")
 
     # ---- Simulado do TAF: aviso automático e modo guiado ----
     if st.session_state.get("resultado_simulado"):
@@ -1803,7 +1927,7 @@ with tab1:
     else:
         treino_pendente = treinos[idx_pendente]
         st.subheader(f"📌 {treino_pendente['dia_nome']}")
-        st.caption("O próximo treino é liberado quando você marcar este como concluído.")
+        st.caption("O próximo treino é liberado quando você salvar este.")
 
         ck = f"{plano.get('ciclo_id', 1)}_{treino_pendente.get('id', idx_pendente + 1)}"
         rasc = rascunho_atual(ck)
@@ -1811,40 +1935,35 @@ with tab1:
             if i_r.isdigit() and int(i_r) < len(treino_pendente["exercicios"]):
                 preencher_formulario(ck, int(i_r), tipo_registro(treino_pendente["exercicios"][int(i_r)]), r, forcar=False)
 
+        st.caption("Em cada exercício: marque a execução, como foi e anote o resultado. Força: repetições de cada "
+                   "série separadas por espaço (ex.: 8 7 6 5). Não fez? Marque ❌ Não fiz.")
+        respostas, erros = [], []
         for i, ex in enumerate(treino_pendente["exercicios"]):
-            etiqueta = f" · 🏁 prova: {nomes_provas.get(ex.get('prova_id'), '')}" if ex.get("prova_id") in nomes_provas else ""
-            st.markdown(f"**{ex['nome']}** — `{ex.get('series', 1)}x {ex.get('reps', '')}`{etiqueta}")
-            if ex.get("detalhes"):
-                st.caption(f"ℹ️ {ex['detalhes']}")
-            if tipo_registro(ex) in ("corrida", "cronometrado", "tempo", "isometria"):
-                ja = " ✅" if str(i) in rasc["resultados"] else ""
-                dica = " (cada Finalizar = 1 série)" if tipo_registro(ex) == "isometria" else ""
-                with st.expander(f"⏱️ Cronômetro deste exercício{dica}{ja}", expanded=ex.get("tipo") == "corrida"):
-                    cronometro_do_exercicio(ck, i, ex, rasc)
+            with st.container(border=True):
+                etiqueta = f" · 🏁 prova: {nomes_provas.get(ex.get('prova_id'), '')}" if ex.get("prova_id") in nomes_provas else ""
+                st.markdown(f"**{i + 1}. {ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`{etiqueta}")
+                if ex.get("detalhes"):
+                    st.caption(f"ℹ️ {ex['detalhes']}")
+                if tipo_registro(ex) in ("corrida", "cronometrado", "tempo", "isometria"):
+                    ja = " ✅" if str(i) in rasc["resultados"] else ""
+                    dica = " (cada Finalizar = 1 série)" if tipo_registro(ex) == "isometria" else ""
+                    with st.expander(f"⏱️ Cronômetro deste exercício{dica}{ja}", expanded=ex.get("tipo") == "corrida"):
+                        cronometro_do_exercicio(ck, i, ex, rasc)
+                resp, err = campos_registro(ex, f"{ck}_{i}", r_crono=rasc["resultados"].get(str(i)))
+                if err:
+                    st.error(err)
+                    erros.append(err)
+                respostas.append(resp)
 
-        st.markdown("---")
         with st.expander("⏱️ Cronômetro livre (descanso entre séries, etc.)"):
             cronometro_treino(usuario_input)
-        st.markdown("---")
-        with st.form("form_treino_hoje"):
-            st.markdown("### 📝 Registrar Desempenho")
-            st.caption("Deixe em branco o que você não fez — campos vazios não entram nos gráficos.")
-            data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today(), format="DD/MM/YYYY")
-            rpe = st.slider("Esforço percebido geral (1 = muito leve, 10 = máximo):", 1, 10, 6)
-
-            st.caption("Em cada exercício: marque como foi a execução e anote o resultado. "
-                       "Força: repetições de cada série separadas por espaço (ex.: 8 7 6 5).")
-            respostas, erros = [], []
-            for i, ex in enumerate(treino_pendente["exercicios"]):
-                st.markdown(f"**{ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`")
-                resp, err = campos_registro(ex, f"{ck}_{i}", r_crono=rasc["resultados"].get(str(i)))
-                respostas.append(resp)
-                if err:
-                    erros.append(err)
-                st.divider()
-
-            obs = st.text_area("Observações (dores, sensações, condições do dia):")
-            if st.form_submit_button("💾 Salvar e concluir este treino", type="primary", width="stretch"):
+        st.markdown("### 📝 Finalizar o treino")
+        with st.container():
+            data_execucao = st.date_input("Data em que realizou este treino:", value=datetime.date.today(),
+                                          format="DD/MM/YYYY", key=f"data_exec_{ck}")
+            rpe = st.slider("Esforço percebido geral (1 = muito leve, 10 = máximo):", 1, 10, 6, key=f"rpe_{ck}")
+            obs = st.text_area("Observações (dores, sensações, condições do dia):", key=f"obs_{ck}")
+            if st.button("💾 Salvar e concluir este treino", type="primary", width="stretch", key=f"salvar_{ck}"):
                 if erros:
                     st.error("Corrija antes de salvar:\n\n- " + "\n- ".join(erros))
                 elif not any(tem_dados(r) or r.get("status") for r in respostas):
@@ -2072,300 +2191,331 @@ with tab3:
 # -----------------------------------------------------------------------
 with tab4:
     st.header("📊 Minha Evolução")
+    ab_prov, ab_cor, ab_forca, ab_med, ab_hist = st.tabs(["🎯 Provas", "🏃 Corrida", "💪 Força", "⚖️ Medidas", "🔍 Histórico"])
 
-    # ---- Medidas semanais ----
-    st.subheader("⚖️ Medidas semanais")
-    medidas = medidas_ordenadas(dados_usuario.get("medidas"))
-    with st.expander("➕ Registrar medidas", expanded=not medidas):
-        form_medidas("evolucao")
-    if medidas:
-        df_m = pd.DataFrame(medidas).reindex(columns=["data", "peso_kg", "cintura_cm", "fc_repouso", "obs"])
-        df_m["data"] = pd.to_datetime(df_m["data"])
-        indicadores = [
-            ("peso_kg", "Peso", "kg", "off"),
-            ("cintura_cm", "Cintura", "cm", "inverse"),
-            ("fc_repouso", "FC de repouso", "bpm", "inverse"),
-        ]
-        cols_m = st.columns(len(indicadores) + 1)
-        for col, (campo, rotulo, un, cor) in zip(cols_m, indicadores):
-            serie = df_m[["data", campo]].dropna()
-            if serie.empty:
-                col.metric(rotulo, "—")
-                continue
-            atual, primeiro = float(serie[campo].iloc[-1]), float(serie[campo].iloc[0])
-            fmt_n = (lambda v: f"{v:.0f}") if campo == "fc_repouso" else (lambda v: f"{v:.1f}".replace(".", ","))
-            delta = None if len(serie) < 2 else f"{fmt_n(atual - primeiro)} {un} desde o início"
-            col.metric(rotulo, f"{fmt_n(atual)} {un}", delta, delta_color=cor)
-        altura = dados_usuario.get("perfil_fisico", {}).get("altura_cm")
-        pesos = df_m["peso_kg"].dropna()
-        if altura and not pesos.empty:
-            imc = float(pesos.iloc[-1]) / (float(altura) / 100) ** 2
-            cols_m[-1].metric("IMC", f"{imc:.1f}".replace(".", ","),
-                              help="Peso ÷ altura². É só uma referência geral: não diferencia músculo de gordura.")
-        st.caption("Cintura e FC de repouso diminuindo costumam indicar melhora do condicionamento. "
-                   "FC de repouso bem acima do seu normal pode ser sinal de cansaço acumulado ou de que algo não vai bem.")
-
-        abas_m = st.tabs([r for _, r, _, _ in indicadores])
-        for aba, (campo, rotulo, un, _) in zip(abas_m, indicadores):
-            with aba:
+    with ab_med:
+        # ---- Medidas semanais ----
+        st.subheader("⚖️ Medidas semanais")
+        medidas = medidas_ordenadas(dados_usuario.get("medidas"))
+        with st.expander("➕ Registrar medidas", expanded=not medidas):
+            form_medidas("evolucao")
+        if medidas:
+            df_m = pd.DataFrame(medidas).reindex(columns=["data", "peso_kg", "cintura_cm", "fc_repouso", "obs"])
+            df_m["data"] = pd.to_datetime(df_m["data"])
+            indicadores = [
+                ("peso_kg", "Peso", "kg", "off"),
+                ("cintura_cm", "Cintura", "cm", "inverse"),
+                ("fc_repouso", "FC de repouso", "bpm", "inverse"),
+            ]
+            cols_m = st.columns(len(indicadores) + 1)
+            for col, (campo, rotulo, un, cor) in zip(cols_m, indicadores):
                 serie = df_m[["data", campo]].dropna()
                 if serie.empty:
-                    st.info(f"Nenhum registro de {rotulo.lower()} ainda.")
-                else:
-                    st.plotly_chart(px.line(serie, x="data", y=campo, markers=True, labels={campo: un, "data": "Data"}),
-                                    width="stretch", key=f"graf_medida_{campo}")
+                    col.metric(rotulo, "—")
+                    continue
+                atual, primeiro = float(serie[campo].iloc[-1]), float(serie[campo].iloc[0])
+                fmt_n = (lambda v: f"{v:.0f}") if campo == "fc_repouso" else (lambda v: f"{v:.1f}".replace(".", ","))
+                delta = None if len(serie) < 2 else f"{fmt_n(atual - primeiro)} {un} desde o início"
+                col.metric(rotulo, f"{fmt_n(atual)} {un}", delta, delta_color=cor)
+            altura = dados_usuario.get("perfil_fisico", {}).get("altura_cm")
+            pesos = df_m["peso_kg"].dropna()
+            if altura and not pesos.empty:
+                imc = float(pesos.iloc[-1]) / (float(altura) / 100) ** 2
+                cols_m[-1].metric("IMC", f"{imc:.1f}".replace(".", ","),
+                                  help="Peso ÷ altura². É só uma referência geral: não diferencia músculo de gordura.")
+            st.caption("Cintura e FC de repouso diminuindo costumam indicar melhora do condicionamento. "
+                       "FC de repouso bem acima do seu normal pode ser sinal de cansaço acumulado ou de que algo não vai bem.")
 
-        with st.expander(f"📋 Todas as medidas ({len(medidas)})"):
-            tabela = df_m.sort_values("data", ascending=False).copy()
-            tabela["data"] = tabela["data"].dt.strftime("%d/%m/%Y")
-            st.dataframe(tabela.rename(columns={"data": "Data", "peso_kg": "Peso (kg)", "cintura_cm": "Cintura (cm)",
-                                                "fc_repouso": "FC repouso (bpm)", "obs": "Observações"}),
-                         hide_index=True, width="stretch")
-            datas_m = [m["data"] for m in reversed(medidas)]
-            c_d1, c_d2 = st.columns([3, 1])
-            data_apagar = c_d1.selectbox("Apagar a medida do dia:", datas_m,
-                                         format_func=lambda d: datetime.date.fromisoformat(d).strftime("%d/%m/%Y"))
-            if c_d2.button("🗑️ Apagar", key="apagar_medida"):
-                dados_usuario["medidas"] = [m for m in medidas if m.get("data") != data_apagar]
-                if salvar():
-                    st.session_state["toast"] = "Medida apagada."
-                    st.rerun()
-    st.markdown("---")
+            abas_m = st.tabs([r for _, r, _, _ in indicadores])
+            for aba, (campo, rotulo, un, _) in zip(abas_m, indicadores):
+                with aba:
+                    serie = df_m[["data", campo]].dropna()
+                    if serie.empty:
+                        st.info(f"Nenhum registro de {rotulo.lower()} ainda.")
+                    else:
+                        st.plotly_chart(eixo_datas(px.line(serie, x="data", y=campo, markers=True, labels={campo: un, "data": "Data"}), serie["data"]),
+                                        width="stretch", key=f"graf_medida_{campo}")
+
+            with st.expander(f"📋 Todas as medidas ({len(medidas)})"):
+                tabela = df_m.sort_values("data", ascending=False).copy()
+                tabela["data"] = tabela["data"].dt.strftime("%d/%m/%Y")
+                st.dataframe(tabela.rename(columns={"data": "Data", "peso_kg": "Peso (kg)", "cintura_cm": "Cintura (cm)",
+                                                    "fc_repouso": "FC repouso (bpm)", "obs": "Observações"}),
+                             hide_index=True, width="stretch")
+                datas_m = [m["data"] for m in reversed(medidas)]
+                c_d1, c_d2 = st.columns([3, 1])
+                data_apagar = c_d1.selectbox("Apagar a medida do dia:", datas_m,
+                                             format_func=lambda d: datetime.date.fromisoformat(d).strftime("%d/%m/%Y"))
+                if c_d2.button("🗑️ Apagar", key="apagar_medida"):
+                    dados_usuario["medidas"] = [m for m in medidas if m.get("data") != data_apagar]
+                    if salvar():
+                        st.session_state["toast"] = "Medida apagada."
+                        st.rerun()
+        st.markdown("---")
 
     hist = dados_usuario.get("historico_evolucoes", [])
     if not hist:
-        st.info("Nenhum treino registrado ainda. Registre seus treinos na primeira aba para ver os gráficos!")
+        ab_prov.info("Nenhum treino registrado ainda. Registre seus treinos na primeira aba para ver os gráficos!")
     else:
-        # ---- Painel de metas do edital ----
-        if provas_ativas:
-            st.subheader("🎯 Você x Índices do Edital")
-            df_prov = linhas_por_prova(hist, provas_ativas)
-            if sexo_usuario not in ("Masculino", "Feminino"):
-                st.caption("Informe seu sexo no Perfil Físico para comparar com o índice certo.")
-            colunas = st.columns(min(3, len(provas_ativas)))
-            for i, p in enumerate(provas_ativas):
-                meta = meta_para(p, sexo_usuario)
-                dados_p = df_prov[df_prov["prova_id"] == p["id"]] if not df_prov.empty else df_prov
-                with colunas[i % len(colunas)]:
-                    if dados_p.empty:
-                        st.metric(p["nome"], "sem registro", help=f"Meta: {meta_texto(p, meta)}")
-                    else:
-                        melhor = dados_p["valor"].max() if p["melhor"] == "maior" else dados_p["valor"].min()
-                        ok = atingiu(p, melhor, meta)
-                        status = "✅ meta atingida" if ok else (f"meta {meta_texto(p, meta)}" if meta is not None else "")
-                        st.metric(p["nome"], fmt_valor(p, melhor), status, delta_color="off")
-            if not df_prov.empty:
-                prova_sel = st.selectbox(
-                    "Ver evolução da prova:", [p["id"] for p in provas_ativas if p["id"] in set(df_prov["prova_id"])],
-                    format_func=lambda x: nomes_provas.get(x, x),
-                )
-                p = next(x for x in provas_ativas if x["id"] == prova_sel)
-                d = df_prov[df_prov["prova_id"] == prova_sel].copy()
-                d["data"] = pd.to_datetime(d["data"])
-                d = d.sort_values("data")
-                y = d["valor"] / 60 if p["tipo_medida"] == "tempo" and d["valor"].max() >= 60 else d["valor"]
-                unidade = "min" if p["tipo_medida"] == "tempo" and d["valor"].max() >= 60 else (
-                    "s" if p["tipo_medida"] == "tempo" else ("m" if p["tipo_medida"] == "distancia" else "reps"))
-                fig = px.line(d.assign(y=y), x="data", y="y", markers=True, color="origem",
-                              labels={"y": unidade, "data": "Data"}, title=p["nome"])
-                meta = meta_para(p, sexo_usuario)
-                if meta is not None:
-                    meta_plot = meta / 60 if unidade == "min" else meta
-                    fig.add_hline(y=meta_plot, line_dash="dash", line_color="green", annotation_text=f"Índice do edital ({meta_texto(p, meta)})")
-                if p["melhor"] == "menor":
-                    st.caption("Nesta prova, quanto **menor** o tempo, melhor.")
-                st.plotly_chart(fig, width="stretch")
-        else:
-            st.info("Ative um edital/cargo com índices cadastrados para comparar seus resultados com as metas.")
-
-        # ---- Ritmo de corrida (todas as corridas registradas) ----
-        corridas = []
-        for h in hist:
-            for ex in h.get("exercicios_realizados") or []:
-                if ex.get("tipo") == "corrida" and ex.get("distancia_m") and ex.get("tempo_seg"):
-                    corridas.append({"data": h["data"], "distancia_m": ex["distancia_m"], "tempo_seg": ex["tempo_seg"]})
-        alvo_2400 = next((meta_para(p, sexo_usuario) for p in provas_ativas if p["id"] == "corrida_2400m"), None)
-        if corridas:
-            df_c = pd.DataFrame(corridas)
-            df_c["data"] = pd.to_datetime(df_c["data"])
-            df_c["ritmo"] = (df_c["tempo_seg"] / 60) / (df_c["distancia_m"] / 1000)
-            st.subheader("⏱️ Ritmo das corridas (min/km) — quanto menor, melhor")
-            fig_r = px.line(df_c.sort_values("data"), x="data", y="ritmo", markers=True, hover_data=["distancia_m"],
-                            labels={"ritmo": "min/km", "data": "Data"})
-            if alvo_2400:
-                ritmo_alvo = (alvo_2400 / 60) / 2.4
-                fig_r.add_hline(y=ritmo_alvo, line_dash="dash", line_color="green",
-                                annotation_text=f"Ritmo da meta dos 2.400 m ({ritmo_alvo:.2f} min/km)")
-            st.plotly_chart(fig_r, width="stretch")
-
-        # ---- Voltas das corridas feitas com o cronômetro de voltas ----
-        com_voltas = []
-        for h in hist:
-            for ex in h.get("exercicios_realizados") or []:
-                if ex.get("tipo") == "corrida" and ex.get("voltas_seg"):
-                    com_voltas.append((h.get("data"), ex))
-        if com_voltas:
-            st.subheader("🏁 Ritmo volta a volta")
-            com_voltas.sort(key=lambda x: str(x[0]), reverse=True)
-            esc = st.selectbox(
-                "Corrida:", range(len(com_voltas)),
-                format_func=lambda k: (f"{datetime.date.fromisoformat(com_voltas[k][0]):%d/%m/%Y} — {com_voltas[k][1].get('nome')} "
-                                       f"({com_voltas[k][1].get('distancia_m') or '—'} m em {fmt_tempo(com_voltas[k][1].get('tempo_seg'))})"),
-            )
-            ex_v = com_voltas[esc][1]
-            pista_v = ex_v.get("pista_m") or 400
-            df_v = pd.DataFrame({"volta": range(1, len(ex_v["voltas_seg"]) + 1), "seg": ex_v["voltas_seg"]})
-            df_v["tempo"] = df_v["seg"].apply(fmt_tempo)
-            fig_v = px.bar(df_v, x="volta", y="seg", text="tempo", labels={"volta": f"Volta ({pista_v:.0f} m)", "seg": "segundos"})
-            if alvo_2400:
-                volta_meta = alvo_2400 / 2400 * pista_v
-                fig_v.add_hline(y=volta_meta, line_dash="dash", line_color="green",
-                                annotation_text=f"Volta no ritmo da meta ({fmt_tempo(volta_meta)})")
-            st.plotly_chart(fig_v, width="stretch")
-            st.caption("Voltas parecidas entre si = ritmo bem distribuído. Se as últimas ficam muito mais lentas, "
-                       "a saída provavelmente foi rápida demais.")
-
-        # ---- Esforço percebido ----
-        df_rpe = pd.DataFrame([{"data": h["data"], "rpe": h.get("rpe")} for h in hist if h.get("rpe")])
-        if not df_rpe.empty:
-            df_rpe["data"] = pd.to_datetime(df_rpe["data"])
-            st.subheader("😮‍💨 Esforço percebido por treino")
-            st.caption("Esforço sempre em 9–10 é sinal de que a carga está alta demais para esta fase.")
-            st.plotly_chart(px.bar(df_rpe.sort_values("data"), x="data", y="rpe", labels={"rpe": "Esforço (1-10)", "data": "Data"}), width="stretch")
-
-        # ---- Exercícios de força e isometria (séries de treino) ----
-        linhas_f = []
-        for h in hist:
-            for ex in h.get("exercicios_realizados") or []:
-                if ex.get("tipo") not in ("forca", "isometria") or ex.get("status") == "nao_fez":
-                    continue
-                if ex.get("seg_series"):
-                    melhor, total, un = max(ex["seg_series"]), sum(ex["seg_series"]), "segundos"
-                elif ex.get("reps_series"):
-                    melhor, total, un = max(ex["reps_series"]), sum(ex["reps_series"]), "repetições"
-                elif ex.get("reps_realizadas"):
-                    melhor, total, un = ex["reps_realizadas"], None, "repetições"  # registro antigo
-                else:
-                    continue
-                nome_base = re.sub(r"\s*\(.*?\)", "", ex.get("nome", "")).strip() or ex.get("nome", "")
-                linhas_f.append({"data": h.get("data"), "exercicio": nome_base, "Melhor série": melhor,
-                                 "Total": total, "un": un, "detalhe": resumo_series(ex),
-                                 "execução": etiquetas_execucao(ex) or "—"})
-        if linhas_f:
-            st.subheader("💪 Evolução nos exercícios de força")
-            df_f = pd.DataFrame(linhas_f)
-            df_f["data"] = pd.to_datetime(df_f["data"])
-            ordem_ex = df_f["exercicio"].value_counts().index.tolist()
-            ex_sel = st.selectbox("Exercício:", ordem_ex,
-                                  format_func=lambda n: f"{n} ({int((df_f['exercicio'] == n).sum())} registro(s))")
-            d_f = df_f[df_f["exercicio"] == ex_sel].sort_values("data")
-            un = d_f["un"].iloc[-1]
-            colunas_y = ["Melhor série"] + (["Total"] if d_f["Total"].notna().any() else [])
-            longo = d_f.melt(id_vars=["data", "detalhe", "execução"], value_vars=colunas_y,
-                             var_name="medida", value_name="valor").dropna(subset=["valor"])
-            fig_f = px.line(longo, x="data", y="valor", color="medida", markers=True,
-                            hover_data={"detalhe": True, "execução": True},
-                            labels={"valor": un, "data": "Data", "medida": ""})
-            st.plotly_chart(fig_f, width="stretch")
-            st.caption("**Melhor série** mostra sua força máxima; **Total** (soma das séries) mostra a resistência. "
-                       "Registros antigos só têm a melhor série.")
-
-        # ---- Histórico detalhado, com edição e exclusão ----
-        st.subheader("🔍 Histórico detalhado")
-        ordem = sorted(range(len(hist)), key=lambda i: str(hist[i].get("data")), reverse=True)
-        for i in ordem:
-            item = hist[i]
-            editando = st.session_state.get("edit_hist") == i
-            with st.expander(f"{item.get('data')} — {item.get('treino', '')}", expanded=editando):
-                if editando:
-                    with st.form(f"form_edit_hist_{i}"):
-                        st.markdown("**✏️ Editando registro**")
-                        try:
-                            data0 = datetime.date.fromisoformat(str(item.get("data")))
-                        except ValueError:
-                            data0 = datetime.date.today()
-                        nova_data = st.date_input("Data", value=data0, format="DD/MM/YYYY", key=f"ed_data_{i}")
-                        novo_rpe = item.get("rpe")
-                        if item.get("tipo_registro") != "simulado":
-                            novo_rpe = st.slider("Esforço percebido geral", 1, 10, int(item.get("rpe") or 6), key=f"ed_rpe_{i}")
-                        novos, erros_ed = [], []
-                        for j, ex in enumerate(item.get("exercicios_realizados") or []):
-                            st.markdown(f"**{ex.get('nome', 'Exercício')}**")
-                            resp, err = campos_registro({"nome": ex.get("nome", "Exercício")}, f"ed{i}_{j}", ini=ex)
-                            geridos = set(CAMPOS_DE_DADOS) | {"series_realizadas", "status", "sensacao", "variacao",
-                                                              "voltas_seg", "pista_m", "tentativas_seg"}
-                            # Mantém qualquer outra informação que já existia no registro.
-                            novos.append({**{k: v for k, v in ex.items() if k not in geridos}, **resp})
-                            if err:
-                                erros_ed.append(err)
-                        nova_obs = st.text_area("Observações", value=item.get("obs") or "", key=f"ed_obs_{i}")
-                        c_s, c_c = st.columns(2)
-                        salvar_ed = c_s.form_submit_button("💾 Salvar alterações", type="primary")
-                        cancelar_ed = c_c.form_submit_button("↩️ Cancelar")
-                    if cancelar_ed:
-                        st.session_state.pop("edit_hist", None)
-                        st.rerun()
-                    if salvar_ed:
-                        if erros_ed:
-                            st.error("Corrija antes de salvar:\n\n- " + "\n- ".join(erros_ed))
+        with ab_prov:
+            # ---- Painel de metas do edital ----
+            if provas_ativas:
+                st.subheader("🎯 Você x Índices do Edital")
+                df_prov = linhas_por_prova(hist, provas_ativas)
+                if sexo_usuario not in ("Masculino", "Feminino"):
+                    st.caption("Informe seu sexo no Perfil Físico para comparar com o índice certo.")
+                colunas = st.columns(min(3, len(provas_ativas)))
+                for i, p in enumerate(provas_ativas):
+                    meta = meta_para(p, sexo_usuario)
+                    dados_p = df_prov[df_prov["prova_id"] == p["id"]] if not df_prov.empty else df_prov
+                    with colunas[i % len(colunas)]:
+                        if dados_p.empty:
+                            st.metric(p["nome"], "sem registro", help=f"Meta: {meta_texto(p, meta)}")
                         else:
-                            item.update({"data": str(nova_data), "rpe": novo_rpe, "exercicios_realizados": novos,
-                                         "obs": nova_obs, "editado_em": agora_iso()})
-                            if salvar():
-                                st.session_state.pop("edit_hist", None)
-                                st.session_state["toast"] = "✅ Registro atualizado."
-                                st.rerun()
-                    continue
+                            melhor = dados_p["valor"].max() if p["melhor"] == "maior" else dados_p["valor"].min()
+                            ok = atingiu(p, melhor, meta)
+                            status = "✅ meta atingida" if ok else (f"meta {meta_texto(p, meta)}" if meta is not None else "")
+                            st.metric(p["nome"], fmt_valor(p, melhor), status, delta_color="off")
+                st.subheader("🧭 Prioridades e projeção")
+                analise = analise_provas(hist, provas_ativas, sexo_usuario, cfg.get("data_taf"))
+                for k_a, a in enumerate(analise, start=1):
+                    p = a["prova"]
+                    atual_txt = fmt_valor(p, a["atual"]) if a["atual"] is not None else "sem registro"
+                    dist_txt = ("✅ atingido" if a["gap"] is not None and a["gap"] <= 0 else
+                                (f"faltam {a['gap'] * 100:.0f}%" if a["gap"] is not None else ""))
+                    st.markdown(f"**{k_a}. {p['nome']}** — {atual_txt} · índice {meta_texto(p, a['meta'])}"
+                                + (f" · **{dist_txt}**" if dist_txt else "")
+                                + (f"  \n{a['projecao']}" if a["atual"] is not None else ""))
+                st.caption("A primeira da lista é a que está mais longe do índice — a IA dá mais atenção a ela na próxima "
+                           "semana. A projeção é uma estimativa simples pela tendência dos seus registros, não uma garantia.")
+                if not df_prov.empty:
+                    prova_sel = st.selectbox(
+                        "Ver evolução da prova:", [p["id"] for p in provas_ativas if p["id"] in set(df_prov["prova_id"])],
+                        format_func=lambda x: nomes_provas.get(x, x),
+                    )
+                    p = next(x for x in provas_ativas if x["id"] == prova_sel)
+                    d = df_prov[df_prov["prova_id"] == prova_sel].copy()
+                    d["data"] = pd.to_datetime(d["data"])
+                    d = d.sort_values("data")
+                    y = d["valor"] / 60 if p["tipo_medida"] == "tempo" and d["valor"].max() >= 60 else d["valor"]
+                    unidade = "min" if p["tipo_medida"] == "tempo" and d["valor"].max() >= 60 else (
+                        "s" if p["tipo_medida"] == "tempo" else ("m" if p["tipo_medida"] == "distancia" else "reps"))
+                    fig = px.line(d.assign(y=y), x="data", y="y", markers=True, color="origem",
+                                  labels={"y": unidade, "data": "Data"}, title=p["nome"])
+                    meta = meta_para(p, sexo_usuario)
+                    if meta is not None:
+                        meta_plot = meta / 60 if unidade == "min" else meta
+                        fig.add_hline(y=meta_plot, line_dash="dash", line_color="green", annotation_text=f"Índice do edital ({meta_texto(p, meta)})")
+                    if p["melhor"] == "menor":
+                        st.caption("Nesta prova, quanto **menor** o tempo, melhor.")
+                    st.plotly_chart(eixo_datas(fig, d["data"]), width="stretch")
+            else:
+                st.info("Ative um edital/cargo com índices cadastrados para comparar seus resultados com as metas.")
 
-                if item.get("rpe"):
-                    st.caption(f"Esforço: {item['rpe']}/10")
-                linhas_ex = []
-                for ex in item.get("exercicios_realizados") or []:
-                    if ex.get("status") == "nao_fez":
-                        resultado = "não feito"
-                    elif ex.get("valor") is not None and ex.get("prova_id"):
-                        p = next((x for x in provas_ativas if x["id"] == ex["prova_id"]), {"tipo_medida": "repeticoes"})
-                        resultado = fmt_valor(p, ex["valor"])
-                    elif ex.get("tipo") == "corrida":
-                        resultado = f"{ex.get('distancia_m') or '—'} m em {fmt_tempo(ex.get('tempo_seg'))}"
-                    elif ex.get("tipo") == "tempo":
-                        resultado = f"{ex.get('duracao_min') or '—'} min"
-                    elif ex.get("tipo") == "cronometrado":
-                        resultado = fmt_tempo(ex.get("tempo_seg"))
-                    elif ex.get("tipo") == "distancia":
-                        resultado = f"{ex.get('valor_m') or '—'} m"
+        with ab_cor:
+            # ---- Ritmo de corrida (todas as corridas registradas) ----
+            corridas = []
+            for h in hist:
+                for ex in h.get("exercicios_realizados") or []:
+                    if ex.get("tipo") == "corrida" and ex.get("distancia_m") and ex.get("tempo_seg"):
+                        corridas.append({"data": h["data"], "distancia_m": ex["distancia_m"], "tempo_seg": ex["tempo_seg"]})
+            alvo_2400 = next((meta_para(p, sexo_usuario) for p in provas_ativas if p["id"] == "corrida_2400m"), None)
+            if not corridas:
+                st.info("Nenhuma corrida com distância e tempo registrada ainda.")
+            if corridas:
+                df_c = pd.DataFrame(corridas)
+                df_c["data"] = pd.to_datetime(df_c["data"])
+                df_c["ritmo"] = (df_c["tempo_seg"] / 60) / (df_c["distancia_m"] / 1000)
+                st.subheader("⏱️ Ritmo das corridas (min/km) — quanto menor, melhor")
+                fig_r = px.line(df_c.sort_values("data"), x="data", y="ritmo", markers=True, hover_data=["distancia_m"],
+                                labels={"ritmo": "min/km", "data": "Data"})
+                if alvo_2400:
+                    ritmo_alvo = (alvo_2400 / 60) / 2.4
+                    fig_r.add_hline(y=ritmo_alvo, line_dash="dash", line_color="green",
+                                    annotation_text=f"Ritmo da meta dos 2.400 m ({ritmo_alvo:.2f} min/km)")
+                st.plotly_chart(eixo_datas(fig_r, df_c["data"]), width="stretch")
+
+            # ---- Voltas das corridas feitas com o cronômetro de voltas ----
+            com_voltas = []
+            for h in hist:
+                for ex in h.get("exercicios_realizados") or []:
+                    if ex.get("tipo") in ("corrida", "simulado") and (ex.get("voltas_seg") or ex.get("tiros_seg")):
+                        com_voltas.append((h.get("data"), ex))
+            if com_voltas:
+                st.subheader("🏁 Volta a volta e tiro a tiro")
+                com_voltas.sort(key=lambda x: str(x[0]), reverse=True)
+                esc = st.selectbox(
+                    "Corrida:", range(len(com_voltas)),
+                    format_func=lambda k: (f"{datetime.date.fromisoformat(com_voltas[k][0]):%d/%m/%Y} — {com_voltas[k][1].get('nome')} "
+                                           f"({com_voltas[k][1].get('distancia_m') or '—'} m em {fmt_tempo(com_voltas[k][1].get('tempo_seg'))})"),
+                )
+                ex_v = com_voltas[esc][1]
+                e_tiro = bool(ex_v.get("tiros_seg"))
+                pista_v = (ex_v.get("dist_tiro_m") if e_tiro else ex_v.get("pista_m")) or 400
+                trechos = ex_v.get("tiros_seg") or ex_v.get("voltas_seg")
+                nome_t = "Tiro" if e_tiro else "Volta"
+                df_v = pd.DataFrame({"volta": range(1, len(trechos) + 1), "seg": trechos})
+                df_v["tempo"] = df_v["seg"].apply(fmt_tempo)
+                fig_v = px.bar(df_v, x="volta", y="seg", text="tempo", labels={"volta": f"{nome_t} ({pista_v:.0f} m)", "seg": "segundos"})
+                if alvo_2400:
+                    volta_meta = alvo_2400 / 2400 * pista_v
+                    fig_v.add_hline(y=volta_meta, line_dash="dash", line_color="green",
+                                    annotation_text=f"Volta no ritmo da meta ({fmt_tempo(volta_meta)})")
+                st.plotly_chart(fig_v, width="stretch")
+                st.caption("Tiros: compare semana a semana se estão ficando mais rápidos (o descanso não entra na conta)."
+                           if e_tiro else
+                           "Voltas parecidas entre si = ritmo bem distribuído. Se as últimas ficam muito mais lentas, "
+                           "a saída provavelmente foi rápida demais.")
+
+        with ab_hist:
+            # ---- Esforço percebido ----
+            df_rpe = pd.DataFrame([{"data": h["data"], "rpe": h.get("rpe")} for h in hist if h.get("rpe")])
+            if not df_rpe.empty:
+                df_rpe["data"] = pd.to_datetime(df_rpe["data"])
+                st.subheader("😮‍💨 Esforço percebido por treino")
+                st.caption("Esforço sempre em 9–10 é sinal de que a carga está alta demais para esta fase.")
+                df_rpe["data"] = pd.to_datetime(df_rpe["data"])
+                fig_rpe = px.bar(df_rpe.sort_values("data"), x="data", y="rpe", labels={"rpe": "Esforço (1-10)", "data": "Data"})
+                st.plotly_chart(eixo_datas(fig_rpe, df_rpe["data"]), width="stretch")
+
+        with ab_forca:
+            # ---- Exercícios de força e isometria (séries de treino) ----
+            linhas_f = []
+            for h in hist:
+                for ex in h.get("exercicios_realizados") or []:
+                    if ex.get("tipo") not in ("forca", "isometria") or ex.get("status") == "nao_fez":
+                        continue
+                    if ex.get("seg_series"):
+                        melhor, total, un = max(ex["seg_series"]), sum(ex["seg_series"]), "segundos"
+                    elif ex.get("reps_series"):
+                        melhor, total, un = max(ex["reps_series"]), sum(ex["reps_series"]), "repetições"
+                    elif ex.get("reps_realizadas"):
+                        melhor, total, un = ex["reps_realizadas"], None, "repetições"  # registro antigo
                     else:
-                        resultado = resumo_series(ex)
-                    linhas_ex.append({"Exercício": ex.get("nome"), "Resultado": resultado,
-                                      "Execução": etiquetas_execucao(ex) or "—"})
-                if linhas_ex:
-                    df_ex_h = pd.DataFrame(linhas_ex)
-                    if (df_ex_h["Execução"] == "—").all():
-                        df_ex_h = df_ex_h.drop(columns=["Execução"])
-                    st.dataframe(df_ex_h, hide_index=True, width="stretch")
-                if item.get("obs"):
-                    st.caption(f"📝 {item['obs']}")
-                chave = f"conf_del_hist_{i}"
-                if not st.session_state.get(chave):
-                    c_e, c_d = st.columns(2)
-                    if c_e.button("✏️ Editar", key=f"edit_hist_btn_{i}"):
-                        st.session_state["edit_hist"] = i
-                        st.rerun()
-                    if c_d.button("🗑️ Apagar este registro", key=f"del_hist_{i}"):
-                        st.session_state[chave] = True
-                        st.rerun()
-                else:
-                    st.warning("Apagar este registro? Não dá para desfazer.")
-                    c_s, c_n = st.columns(2)
-                    if c_s.button("✅ Sim, apagar", key=f"sim_del_{i}"):
-                        del hist[i]
-                        st.session_state[chave] = False
-                        st.session_state.pop("edit_hist", None)
-                        if salvar():
+                        continue
+                    nome_base = re.sub(r"\s*\(.*?\)", "", ex.get("nome", "")).strip() or ex.get("nome", "")
+                    linhas_f.append({"data": h.get("data"), "exercicio": nome_base, "Melhor série": melhor,
+                                     "Total": total, "un": un, "detalhe": resumo_series(ex),
+                                     "execução": etiquetas_execucao(ex) or "—"})
+            if not linhas_f:
+                st.info("Nenhum exercício de força registrado com repetições ainda.")
+            if linhas_f:
+                st.subheader("💪 Evolução nos exercícios de força")
+                df_f = pd.DataFrame(linhas_f)
+                df_f["data"] = pd.to_datetime(df_f["data"])
+                ordem_ex = df_f["exercicio"].value_counts().index.tolist()
+                ex_sel = st.selectbox("Exercício:", ordem_ex,
+                                      format_func=lambda n: f"{n} ({int((df_f['exercicio'] == n).sum())} registro(s))")
+                d_f = df_f[df_f["exercicio"] == ex_sel].sort_values("data")
+                un = d_f["un"].iloc[-1]
+                colunas_y = ["Melhor série"] + (["Total"] if d_f["Total"].notna().any() else [])
+                longo = d_f.melt(id_vars=["data", "detalhe", "execução"], value_vars=colunas_y,
+                                 var_name="medida", value_name="valor").dropna(subset=["valor"])
+                fig_f = px.line(longo, x="data", y="valor", color="medida", markers=True,
+                                hover_data={"detalhe": True, "execução": True},
+                                labels={"valor": un, "data": "Data", "medida": ""})
+                st.plotly_chart(eixo_datas(fig_f, longo["data"]), width="stretch")
+                st.caption("**Melhor série** mostra sua força máxima; **Total** (soma das séries) mostra a resistência. "
+                           "Registros antigos só têm a melhor série.")
+
+        with ab_hist:
+            # ---- Histórico detalhado, com edição e exclusão ----
+            st.subheader("🔍 Histórico detalhado")
+            ordem = sorted(range(len(hist)), key=lambda i: str(hist[i].get("data")), reverse=True)
+            for i in ordem:
+                item = hist[i]
+                editando = st.session_state.get("edit_hist") == i
+                with st.expander(f"{item.get('data')} — {item.get('treino', '')}", expanded=editando):
+                    if editando:
+                        with st.form(f"form_edit_hist_{i}"):
+                            st.markdown("**✏️ Editando registro**")
+                            try:
+                                data0 = datetime.date.fromisoformat(str(item.get("data")))
+                            except ValueError:
+                                data0 = datetime.date.today()
+                            nova_data = st.date_input("Data", value=data0, format="DD/MM/YYYY", key=f"ed_data_{i}")
+                            novo_rpe = item.get("rpe")
+                            if item.get("tipo_registro") != "simulado":
+                                novo_rpe = st.slider("Esforço percebido geral", 1, 10, int(item.get("rpe") or 6), key=f"ed_rpe_{i}")
+                            novos, erros_ed = [], []
+                            for j, ex in enumerate(item.get("exercicios_realizados") or []):
+                                st.markdown(f"**{ex.get('nome', 'Exercício')}**")
+                                resp, err = campos_registro({"nome": ex.get("nome", "Exercício")}, f"ed{i}_{j}", ini=ex)
+                                geridos = set(CAMPOS_DE_DADOS) | {"series_realizadas", "status", "sensacao", "variacao",
+                                                                  "voltas_seg", "pista_m", "tentativas_seg", "tiros_seg",
+                                                              "dist_tiro_m", "descansos_seg"}
+                                # Mantém qualquer outra informação que já existia no registro.
+                                novos.append({**{k: v for k, v in ex.items() if k not in geridos}, **resp})
+                                if err:
+                                    erros_ed.append(err)
+                            nova_obs = st.text_area("Observações", value=item.get("obs") or "", key=f"ed_obs_{i}")
+                            c_s, c_c = st.columns(2)
+                            salvar_ed = c_s.form_submit_button("💾 Salvar alterações", type="primary")
+                            cancelar_ed = c_c.form_submit_button("↩️ Cancelar")
+                        if cancelar_ed:
+                            st.session_state.pop("edit_hist", None)
                             st.rerun()
-                    if c_n.button("↩️ Cancelar", key=f"nao_del_{i}"):
-                        st.session_state[chave] = False
-                        st.rerun()
+                        if salvar_ed:
+                            if erros_ed:
+                                st.error("Corrija antes de salvar:\n\n- " + "\n- ".join(erros_ed))
+                            else:
+                                item.update({"data": str(nova_data), "rpe": novo_rpe, "exercicios_realizados": novos,
+                                             "obs": nova_obs, "editado_em": agora_iso()})
+                                if salvar():
+                                    st.session_state.pop("edit_hist", None)
+                                    st.session_state["toast"] = "✅ Registro atualizado."
+                                    st.rerun()
+                        continue
+
+                    if item.get("rpe"):
+                        st.caption(f"Esforço: {item['rpe']}/10")
+                    linhas_ex = []
+                    for ex in item.get("exercicios_realizados") or []:
+                        if ex.get("status") == "nao_fez":
+                            resultado = "não feito"
+                        elif ex.get("valor") is not None and ex.get("prova_id"):
+                            p = next((x for x in provas_ativas if x["id"] == ex["prova_id"]), {"tipo_medida": "repeticoes"})
+                            resultado = fmt_valor(p, ex["valor"])
+                        elif ex.get("tipo") == "corrida":
+                            resultado = f"{ex.get('distancia_m') or '—'} m em {fmt_tempo(ex.get('tempo_seg'))}"
+                        elif ex.get("tipo") == "tempo":
+                            resultado = f"{ex.get('duracao_min') or '—'} min"
+                        elif ex.get("tipo") == "cronometrado":
+                            resultado = fmt_tempo(ex.get("tempo_seg"))
+                        elif ex.get("tipo") == "distancia":
+                            resultado = f"{ex.get('valor_m') or '—'} m"
+                        else:
+                            resultado = resumo_series(ex)
+                        linhas_ex.append({"Exercício": ex.get("nome"), "Resultado": resultado,
+                                          "Execução": etiquetas_execucao(ex) or "—"})
+                    if linhas_ex:
+                        df_ex_h = pd.DataFrame(linhas_ex)
+                        if (df_ex_h["Execução"] == "—").all():
+                            df_ex_h = df_ex_h.drop(columns=["Execução"])
+                        st.dataframe(df_ex_h, hide_index=True, width="stretch")
+                    if item.get("obs"):
+                        st.caption(f"📝 {item['obs']}")
+                    chave = f"conf_del_hist_{i}"
+                    if not st.session_state.get(chave):
+                        c_e, c_d = st.columns(2)
+                        if c_e.button("✏️ Editar", key=f"edit_hist_btn_{i}"):
+                            st.session_state["edit_hist"] = i
+                            st.rerun()
+                        if c_d.button("🗑️ Apagar este registro", key=f"del_hist_{i}"):
+                            st.session_state[chave] = True
+                            st.rerun()
+                    else:
+                        st.warning("Apagar este registro? Não dá para desfazer.")
+                        c_s, c_n = st.columns(2)
+                        if c_s.button("✅ Sim, apagar", key=f"sim_del_{i}"):
+                            del hist[i]
+                            st.session_state[chave] = False
+                            st.session_state.pop("edit_hist", None)
+                            if salvar():
+                                st.rerun()
+                        if c_n.button("↩️ Cancelar", key=f"nao_del_{i}"):
+                            st.session_state[chave] = False
+                            st.rerun()
 
 # -----------------------------------------------------------------------
 # TAB 5: EDITAIS (BANCO COMPARTILHADO)

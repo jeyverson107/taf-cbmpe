@@ -75,7 +75,8 @@ let K = null;      // chave do estado deste exercício no aparelho
 let s = null;      // estado
 
 function estadoVazio() {
-  return { inicio: null, acum: 0, voltas: [], pista: null, alvo: null, pendente: null, ultimo: null };
+  return { inicio: null, acum: 0, voltas: [], pista: null, alvo: null, pendente: null, ultimo: null,
+           tiros: [], tiroIni: null, fimUltimo: null, descansos: [], dist: null, qtd: null };
 }
 function ler() {
   try { s = JSON.parse(localStorage.getItem(K)) || null; } catch (e) { s = null; }
@@ -86,6 +87,9 @@ function ler() {
     s.pista = (p && p > 0) ? p : (ARGS.pista || 400);
   }
   if (s.alvo == null && ARGS.alvo) s.alvo = ARGS.alvo;
+  if (!s.tiros) { s.tiros = []; s.descansos = []; }
+  if (s.dist == null) s.dist = ARGS.dist_tiro || 400;
+  if (s.qtd == null) s.qtd = ARGS.qtd || 0;
 }
 function gravar() { try { localStorage.setItem(K, JSON.stringify(s)); } catch (e) {} }
 
@@ -187,6 +191,112 @@ function escolherPista(m) {
   try { localStorage.setItem("taf_pista_" + ARGS.usuario, String(m)); } catch (e) {}
   desenhar(true);
 }
+// ---------------------------------------------------------------------------
+// MODO TIROS: cada tiro é cronometrado; o descanso entre eles NÃO entra no tempo.
+// ---------------------------------------------------------------------------
+function tiroBotao() {
+  ler();
+  const agora = Date.now();
+  if (s.tiroIni) {                      // terminou o tiro
+    if (agora - s.tiroIni < 2000) return; // toque duplo sem querer
+    s.tiros.push(agora - s.tiroIni); s.tiroIni = null; s.fimUltimo = agora; vibrar();
+  } else {                              // começou um tiro
+    s.descansos.push(s.fimUltimo ? agora - s.fimUltimo : 0);
+    s.tiroIni = agora; s.ultimo = null; vibrar(); manterTelaAcesa(true);
+  }
+  gravar(); desenhar(true);
+}
+function desfazerTiro() {
+  ler();
+  if (s.tiroIni) { s.tiroIni = null; s.descansos.pop(); }
+  else if (s.tiros.length) { s.tiros.pop(); s.descansos.pop(); }
+  gravar(); desenhar(true);
+}
+function finalizarTiros() {
+  ler();
+  if (s.tiroIni) { s.tiros.push(Date.now() - s.tiroIni); s.tiroIni = null; }
+  if (!s.tiros.length) return;
+  const tirosSeg = s.tiros.map(v => Math.round(v / 10) / 100);
+  const resultado = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    modo: "tiros",
+    tempo_seg: Math.round(tirosSeg.reduce((a, b) => a + b, 0) * 100) / 100,
+    tiros_seg: tirosSeg, voltas_seg: [],
+    descansos_seg: s.descansos.slice(1, s.tiros.length).map(v => Math.round(v / 1000)),
+    dist_tiro_m: s.dist, distancia_m: Math.round(s.tiros.length * s.dist),
+    finalizado_em: new Date().toISOString(),
+  };
+  const dist = s.dist, qtd = s.qtd;
+  s = estadoVazio(); s.dist = dist; s.qtd = qtd; s.pista = 400;
+  s.pendente = resultado; s.ultimo = resultado;
+  gravar(); manterTelaAcesa(false);
+  enviar("streamlit:setComponentValue", { value: resultado, dataType: "json" });
+  desenhar(true);
+}
+function zerarTiros() {
+  ler();
+  if ((s.tiros.length || s.tiroIni) && !confirm("Descartar estes tiros? Nada será registrado.")) return;
+  const dist = s.dist, qtd = s.qtd, pendente = s.pendente, ultimo = s.ultimo;
+  s = estadoVazio(); s.dist = dist; s.qtd = qtd; s.pista = 400; s.pendente = pendente; s.ultimo = ultimo;
+  manterTelaAcesa(false); gravar(); desenhar(true);
+}
+let ultimaEstruturaTiros = "";
+function desenharTiros(forcar) {
+  const agora = Date.now(), correndo = !!s.tiroIni, n = s.tiros.length, comecou = correndo || n > 0;
+  let relogio = "00:00", st = "Defina a distância e a quantidade de tiros e toque em Começar.";
+  if (correndo) { relogio = fmt(agora - s.tiroIni, true); st = "Tiro " + (n + 1) + " em andamento — toque em TERMINEI ao cruzar a marca."; }
+  else if (n) { relogio = fmt(agora - s.fimUltimo); st = "Descansando após o tiro " + n + " (o descanso não entra no tempo)."; }
+  document.getElementById("relogio").textContent = relogio;
+  document.getElementById("status").textContent = st;
+  const estrutura = JSON.stringify([correndo, n, s.dist, s.qtd, !!s.pendente, s.ultimo && s.ultimo.id, travaOk]);
+  if (forcar || estrutura !== ultimaEstruturaTiros) {
+    ultimaEstruturaTiros = estrutura;
+    const cfg = document.getElementById("config");
+    if (comecou) cfg.innerHTML = "";
+    else {
+      const ds = [100, 200, 400, 800];
+      let h = '<div class="linha"><label>Cada tiro:</label>';
+      ds.forEach(m => { h += '<button class="b chip' + (s.dist === m ? " sel" : "") + '" data-dist="' + m + '">' + m + ' m</button>'; });
+      h += '<input type="number" id="distOutra" min="10" step="10" placeholder="outra" value="' + (ds.includes(s.dist) ? "" : s.dist) + '"> m</div>';
+      h += '<div class="linha"><label>Quantidade de tiros:</label><input type="number" id="qtd" min="0" step="1" value="' + (s.qtd || "") + '"></div>';
+      cfg.innerHTML = h;
+      cfg.querySelectorAll("[data-dist]").forEach(b => b.onclick = () => { ler(); s.dist = parseFloat(b.dataset.dist); gravar(); desenhar(true); });
+      document.getElementById("distOutra").onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { ler(); s.dist = v; gravar(); desenhar(true); } };
+      document.getElementById("qtd").onchange = e => { ler(); s.qtd = parseInt(e.target.value) || 0; gravar(); desenhar(true); };
+    }
+    let b = '<button class="b p volta" id="bTiro">' + (correndo ? "⏹️ TERMINEI O TIRO" : "▶️ COMEÇAR TIRO " + (n + 1)) + '</button>';
+    b += '<div class="linha"><button class="b ok" id="bFimT"' + (comecou ? "" : " disabled") + '>✅ Finalizar</button>';
+    b += '<button class="b" id="bDesfT"' + (comecou ? "" : " disabled") + '>↩️ Desfazer tiro</button>';
+    b += '<button class="b" id="bZerT"' + (comecou ? "" : " disabled") + '>🗑️ Descartar</button></div>';
+    document.getElementById("botoes").innerHTML = b;
+    document.getElementById("bTiro").onclick = tiroBotao;
+    document.getElementById("bFimT").onclick = finalizarTiros;
+    document.getElementById("bDesfT").onclick = desfazerTiro;
+    document.getElementById("bZerT").onclick = zerarTiros;
+    let l = "";
+    if (n) {
+      const melhor = Math.min.apply(null, s.tiros), pior = Math.max.apply(null, s.tiros);
+      l = "<table><tr><th>Tiro</th><th>Tempo</th><th>Ritmo</th><th>Descanso antes</th></tr>";
+      for (let i = n - 1; i >= 0; i--) {
+        const cls = n > 1 ? (s.tiros[i] === melhor ? "rapida" : (s.tiros[i] === pior ? "lenta" : "")) : "";
+        l += "<tr><td>" + (i + 1) + "</td><td class='" + cls + "'>" + fmt(s.tiros[i], true) + "</td><td>" + ritmo(s.tiros[i], s.dist) +
+             "</td><td>" + (i ? fmt(s.descansos[i]) : "—") + "</td></tr>";
+      }
+      l += "</table>";
+    }
+    document.getElementById("lista").innerHTML = l;
+    desenharAviso();
+  }
+  if (comecou && n) {
+    const soma = s.tiros.reduce((a, c) => a + c, 0);
+    document.getElementById("stats").innerHTML = '<div class="stats">' +
+      '<div class="stat"><div class="r">Tiros</div><div class="v">' + n + (s.qtd ? " de " + s.qtd : "") + '</div></div>' +
+      '<div class="stat"><div class="r">Melhor</div><div class="v">' + fmt(Math.min.apply(null, s.tiros), true) + '</div></div>' +
+      '<div class="stat"><div class="r">Média</div><div class="v">' + fmt(soma / n, true) + '</div></div></div>';
+  } else document.getElementById("stats").innerHTML = "";
+  ajustarAltura();
+}
+
 function escolherAlvo(m) { ler(); s.alvo = (m > 0) ? m : 0; gravar(); desenhar(false); }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +305,7 @@ function escolherAlvo(m) { ler(); s.alvo = (m > 0) ? m : 0; gravar(); desenhar(f
 let ultimaEstrutura = "";
 function desenhar(forcar) {
   if (!s) return;
+  if (ARGS.modo === "tiros") return desenharTiros(forcar);
   const ms = total(), rodando = !!s.inicio, modoVoltas = ARGS.modo === "voltas";
   const nVoltas = s.voltas.length, ultV = nVoltas ? s.voltas[nVoltas - 1] : 0;
   const dist = nVoltas * (s.pista || 0);
@@ -299,14 +410,16 @@ function desenharAviso() {
   if (s.pendente) {
     html += '<div class="aviso">📤 Enviando o resultado para o app… Se a internet estiver fora, ele fica guardado ' +
             'neste aparelho e é enviado sozinho quando a conexão voltar.</div>';
-  } else if (s.ultimo && !s.inicio && total() === 0) {
+  } else if (s.ultimo && !s.inicio && !s.tiroIni && !(s.tiros && s.tiros.length) && total() === 0) {
     const u = s.ultimo;
     const txt = u.modo === "voltas"
       ? metrosTxt(u.distancia_m) + " em " + fmt(u.tempo_seg * 1000) + " (" + u.voltas_seg.length + " voltas)"
+      : u.modo === "tiros"
+      ? u.tiros_seg.length + " tiros de " + metrosTxt(u.dist_tiro_m) + " (média " + fmt(u.tempo_seg / u.tiros_seg.length * 1000, true) + ")"
       : fmt(u.tempo_seg * 1000, u.tempo_seg < 600);
     html += '<div class="aviso">✅ Registrado: <b>' + txt + '</b>. Para fazer de novo, toque em Iniciar.</div>';
   }
-  if (s.inicio && travaOk === false && ARGS.modo === "voltas") {
+  if ((s.inicio || s.tiroIni) && travaOk === false && ARGS.modo !== "simples") {
     html += '<div class="aviso">💡 Este aparelho não deixou o app manter a tela acesa. Se a tela apagar, o tempo ' +
             'continua contando, mas para marcar as voltas sem desbloquear, aumente o tempo de bloqueio da tela nas configurações do celular.</div>';
   }
@@ -338,7 +451,7 @@ window.addEventListener("message", ev => {
     if (confirmados.includes(s.pendente.id)) { s.pendente = null; gravar(); }
     else { enviar("streamlit:setComponentValue", { value: s.pendente, dataType: "json" }); }
   }
-  if (s.inicio) manterTelaAcesa(true);
+  if (s.inicio || s.tiroIni) manterTelaAcesa(true);
   desenhar(true);
 });
 
