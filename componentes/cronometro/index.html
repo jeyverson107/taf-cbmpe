@@ -9,6 +9,8 @@
   - O tempo é calculado pelo relógio do aparelho (horário de início), então
     NÃO se perde se a tela apagar, o navegador fechar ou a internet cair.
   - Modo "voltas" (corrida): informa o tamanho da pista e toca em "Volta".
+  - Modo "abdominal" (10/11/2026): contagem regressiva de 1 minuto (como na
+    prova), com 3-2-1 de preparação, bipes e contador opcional de repetições.
   - Ao tocar em "Finalizar", o resultado é enviado ao app. Se a conexão
     estiver fora, ele fica guardado no aparelho e é reenviado sozinho.
 -->
@@ -76,7 +78,8 @@ let s = null;      // estado
 
 function estadoVazio() {
   return { inicio: null, acum: 0, voltas: [], pista: null, alvo: null, pendente: null, ultimo: null,
-           tiros: [], tiroIni: null, fimUltimo: null, descansos: [], dist: null, qtd: null };
+           tiros: [], tiroIni: null, fimUltimo: null, descansos: [], dist: null, qtd: null,
+           abdDur: null, abdFase: "config", abdPrep: null, abdIni: null, abdFim: null, abdToques: [], abdReps: null, abdBips: [] };
 }
 function ler() {
   try { s = JSON.parse(localStorage.getItem(K)) || null; } catch (e) { s = null; }
@@ -90,6 +93,14 @@ function ler() {
   if (!s.tiros) { s.tiros = []; s.descansos = []; }
   if (s.dist == null) s.dist = ARGS.dist_tiro || 400;
   if (s.qtd == null) s.qtd = ARGS.qtd || 0;
+  if (s.abdDur == null) {
+    let d = null;
+    try { d = localStorage.getItem("taf_abd_dur_" + ARGS.usuario); } catch (e) {}
+    s.abdDur = (d !== null && !isNaN(parseInt(d))) ? parseInt(d) : (ARGS.duracao != null ? ARGS.duracao : 60);
+  }
+  if (!s.abdFase) s.abdFase = "config";
+  if (!s.abdToques) s.abdToques = [];
+  if (!s.abdBips) s.abdBips = [];
 }
 function gravar() { try { localStorage.setItem(K, JSON.stringify(s)); } catch (e) {} }
 
@@ -297,6 +308,224 @@ function desenharTiros(forcar) {
   ajustarAltura();
 }
 
+
+// ---------------------------------------------------------------------------
+// MODO ABDOMINAL: 1 minuto regressivo (padrão da prova), 3-2-1 de preparação,
+// bipes nos 30 s e nos 5 s finais e contador opcional de repetições.
+// ---------------------------------------------------------------------------
+let audio = null;
+function prepararSom() {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === "suspended") audio.resume();
+  } catch (e) { audio = null; }
+}
+function bip(freq, dur) {
+  try {
+    if (!audio) return;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = freq; o.type = "sine";
+    g.gain.setValueAtTime(0.35, audio.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + dur);
+    o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+function vibrarLongo() { try { navigator.vibrate && navigator.vibrate([300, 100, 300]); } catch (e) {} }
+const PREP_MS = 3000;
+function abdDecorrido() { return s.abdIni ? Math.max(0, Date.now() - s.abdIni) : 0; }
+function bipUmaVez(rotulo, freq, dur, longo) {
+  if (s.abdBips.includes(rotulo)) return;
+  s.abdBips.push(rotulo); gravar();
+  bip(freq, dur); if (longo) vibrarLongo(); else vibrar();
+}
+function abdComecar() {
+  ler(); prepararSom();
+  s.abdFase = "prep"; s.abdPrep = Date.now(); s.abdIni = s.abdPrep + PREP_MS;
+  s.abdFim = null; s.abdToques = []; s.abdReps = null; s.abdBips = []; s.ultimo = null;
+  gravar(); manterTelaAcesa(true); desenhar(true);
+}
+function abdEncerrar() {
+  ler();
+  if (s.abdFase !== "rodando" && s.abdFase !== "prep") return;
+  if (s.abdFase === "prep") { abdDescartar(true); return; }
+  let t = abdDecorrido();
+  if (s.abdDur > 0) t = Math.min(t, s.abdDur * 1000);
+  s.abdFim = t; s.abdFase = "fim";
+  if (s.abdReps == null) s.abdReps = s.abdToques.length;
+  gravar(); manterTelaAcesa(false); desenhar(true);
+}
+function abdTocar() {
+  ler();
+  if (s.abdFase !== "rodando") return;
+  const t = abdDecorrido(), ult = s.abdToques.length ? s.abdToques[s.abdToques.length - 1] : -9999;
+  if (t - ult < 350) return;               // toque duplo sem querer
+  s.abdToques.push(t); gravar(); vibrar(); desenhar(true);
+}
+function abdDesfazerToque() { ler(); if (s.abdToques.length) { s.abdToques.pop(); gravar(); desenhar(true); } }
+function abdDescartar(semPerguntar) {
+  ler();
+  if (!semPerguntar && (s.abdFase === "rodando" || s.abdFase === "fim") &&
+      !confirm("Descartar esta série? Nada será registrado.")) return;
+  const dur = s.abdDur, pendente = s.pendente, ultimo = s.ultimo;
+  s = estadoVazio(); s.abdDur = dur; s.pendente = pendente; s.ultimo = ultimo; s.pista = 400;
+  manterTelaAcesa(false); gravar(); desenhar(true);
+}
+function abdRegistrar() {
+  ler();
+  const campo = document.getElementById("abdReps");
+  const reps = parseInt(campo ? campo.value : s.abdReps);
+  if (isNaN(reps) || reps < 0 || reps > 300) { alert("Informe quantas repetições você fez (0 a 300)."); return; }
+  const resultado = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    modo: "abdominal",
+    reps: reps,
+    tempo_seg: Math.round((s.abdFim || 0) / 10) / 100,
+    duracao_alvo_seg: s.abdDur,
+    toques_seg: s.abdToques.map(v => Math.round(v / 100) / 10),
+    finalizado_em: new Date().toISOString(),
+  };
+  const dur = s.abdDur;
+  s = estadoVazio(); s.abdDur = dur; s.pista = 400;
+  s.pendente = resultado; s.ultimo = resultado;
+  gravar(); manterTelaAcesa(false);
+  enviar("streamlit:setComponentValue", { value: resultado, dataType: "json" });
+  desenhar(true);
+}
+function abdEscolherDur(d) {
+  ler(); s.abdDur = d; gravar();
+  try { localStorage.setItem("taf_abd_dur_" + ARGS.usuario, String(d)); } catch (e) {}
+  desenhar(true);
+}
+function textoMeta(reps, tempoSeg, dur) {
+  const meta = ARGS.meta;
+  if (!meta) return "";
+  if (dur === 60 && tempoSeg >= 59) {
+    return reps >= meta ? '<span class="rapida">✅ Atingiu o índice do edital (' + meta + ')</span>'
+                        : '<span class="lenta">Faltaram ' + (meta - reps) + ' para o índice (' + meta + ')</span>';
+  }
+  if (tempoSeg > 0) {
+    const proj = Math.round(reps / tempoSeg * 60);
+    return "Ritmo: <b>" + proj + " por minuto</b> (índice do edital: " + meta + " em 1 min)";
+  }
+  return "";
+}
+let ultimaEstruturaAbd = "";
+function desenharAbd(forcar) {
+  const agora = Date.now();
+  // Transições automáticas (fim da preparação, bipes e fim do minuto)
+  if (s.abdFase === "prep") {
+    const falta = s.abdIni - agora;
+    if (falta <= 0) { s.abdFase = "rodando"; gravar(); bipUmaVez("go", 1046, 0.45, true); }
+    else { const n = Math.ceil(falta / 1000); bipUmaVez("p" + n, 660, 0.15, false); }
+  }
+  if (s.abdFase === "rodando" && s.abdDur > 0) {
+    const resta = s.abdDur * 1000 - abdDecorrido();
+    if (resta <= 0) {
+      bipUmaVez("fim", 880, 0.9, true);
+      s.abdFim = s.abdDur * 1000; s.abdFase = "fim";
+      if (s.abdReps == null) s.abdReps = s.abdToques.length;
+      gravar(); manterTelaAcesa(false); forcar = true;
+    } else {
+      const r = Math.ceil(resta / 1000);
+      if (s.abdDur > 30 && r === 30) bipUmaVez("m30", 740, 0.25, false);
+      if (r <= 5) bipUmaVez("f" + r, 740, 0.12, false);
+    }
+  }
+
+  const fase = s.abdFase, dur = s.abdDur;
+  let relogio, st;
+  if (fase === "prep") {
+    relogio = String(Math.max(1, Math.ceil((s.abdIni - agora) / 1000)));
+    st = "Prepare-se… a contagem começa no bipe.";
+  } else if (fase === "rodando") {
+    const t = abdDecorrido();
+    relogio = dur > 0 ? fmt(dur * 1000 - t + 999) : fmt(t);
+    st = dur > 0 ? "Valendo! Pausas são permitidas dentro do minuto (item 14.11)." : "Valendo! Toque em Parar quando terminar.";
+  } else if (fase === "fim") {
+    relogio = fmt(s.abdFim || 0);
+    st = "Tempo encerrado. Confira quantas repetições você fez e registre.";
+  } else {
+    relogio = dur > 0 ? fmt(dur * 1000) : "00:00";
+    st = dur > 0 ? "Toque em Começar: 3 segundos de preparação e o tempo corre sozinho." : "Cronômetro livre: conta para cima até você parar.";
+  }
+  document.getElementById("relogio").textContent = relogio;
+  document.getElementById("status").textContent = st;
+
+  const estrutura = JSON.stringify([fase, dur, s.abdToques.length, !!s.pendente, s.ultimo && s.ultimo.id, travaOk]);
+  if (forcar || estrutura !== ultimaEstruturaAbd) {
+    ultimaEstruturaAbd = estrutura;
+    const cfg = document.getElementById("config");
+    if (fase === "config") {
+      const ops = [[60, "1 min (prova)"], [30, "30 s"], [0, "Livre"]];
+      let h = '<div class="linha"><label>Tempo:</label>';
+      ops.forEach(o => { h += '<button class="b chip' + (dur === o[0] ? " sel" : "") + '" data-dur="' + o[0] + '">' + o[1] + '</button>'; });
+      h += '</div>';
+      if (ARGS.meta) h += '<div class="sub">Índice do edital: <b>' + ARGS.meta + ' repetições em 1 minuto</b>.</div>';
+      cfg.innerHTML = h;
+      cfg.querySelectorAll("[data-dur]").forEach(b => b.onclick = () => abdEscolherDur(parseInt(b.dataset.dur)));
+    } else cfg.innerHTML = "";
+
+    let b = "";
+    if (fase === "config") {
+      b = '<button class="b p volta" id="bAbdIni">▶️ COMEÇAR</button>';
+    } else if (fase === "prep" || fase === "rodando") {
+      b = '<button class="b p volta" id="bAbdMais"' + (fase === "rodando" ? "" : " disabled") + '>+1 REPETIÇÃO</button>' +
+          '<div class="sub">Opcional: toque a cada repetição (ou peça a quem segura seus pés). Se preferir, conte de cabeça e digite no final.</div>' +
+          '<div class="linha"><button class="b ok" id="bAbdPar">⏹️ ' + (dur > 0 ? "Encerrar antes" : "Parar") + '</button>' +
+          '<button class="b" id="bAbdDesf"' + (s.abdToques.length ? "" : " disabled") + '>↩️ −1</button>' +
+          '<button class="b" id="bAbdZer">🗑️ Descartar</button></div>';
+    } else if (fase === "fim") {
+      b = '<div class="linha"><label><b>Repetições corretas:</b></label>' +
+          '<button class="b" id="bAbdMenos">−</button>' +
+          '<input type="number" id="abdReps" min="0" max="300" step="1" value="' + (s.abdReps != null ? s.abdReps : "") + '">' +
+          '<button class="b" id="bAbdMaisF">+</button></div>' +
+          '<div class="sub" id="abdMeta"></div>' +
+          '<div class="linha"><button class="b ok" id="bAbdReg">✅ Registrar série</button>' +
+          '<button class="b" id="bAbdZer">🗑️ Descartar</button></div>';
+    }
+    document.getElementById("botoes").innerHTML = b;
+    const on = (id, f) => { const e = document.getElementById(id); if (e) e.onclick = f; };
+    on("bAbdIni", abdComecar); on("bAbdMais", abdTocar); on("bAbdPar", abdEncerrar);
+    on("bAbdDesf", abdDesfazerToque); on("bAbdZer", () => abdDescartar(false)); on("bAbdReg", abdRegistrar);
+    const campo = document.getElementById("abdReps");
+    const atualizarMeta = () => {
+      const v = parseInt(campo.value); ler(); s.abdReps = isNaN(v) ? null : v; gravar();
+      document.getElementById("abdMeta").innerHTML = isNaN(v) ? "" : textoMeta(v, (s.abdFim || 0) / 1000, s.abdDur);
+      ajustarAltura();
+    };
+    if (campo) {
+      campo.oninput = atualizarMeta;
+      on("bAbdMenos", () => { campo.value = Math.max(0, (parseInt(campo.value) || 0) - 1); atualizarMeta(); });
+      on("bAbdMaisF", () => { campo.value = (parseInt(campo.value) || 0) + 1; atualizarMeta(); });
+      atualizarMeta();
+    }
+    document.getElementById("lista").innerHTML = "";
+
+    let av = "";
+    if (s.pendente) {
+      av = '<div class="aviso">📤 Enviando o resultado para o app… Se a internet estiver fora, ele fica guardado ' +
+           'neste aparelho e é enviado sozinho quando a conexão voltar.</div>';
+    } else if (s.ultimo && s.ultimo.modo === "abdominal" && fase === "config") {
+      const u = s.ultimo;
+      av = '<div class="aviso">✅ Registrado: <b>' + u.reps + ' repetições em ' + fmt(u.tempo_seg * 1000) + '</b>. ' +
+           textoMeta(u.reps, u.tempo_seg, u.duracao_alvo_seg) + '<br>Para a próxima série, toque em Começar.</div>';
+    }
+    if ((fase === "prep" || fase === "rodando") && travaOk === false) {
+      av += '<div class="aviso">💡 O aparelho não deixou manter a tela acesa. O tempo continua certo mesmo se a tela ' +
+            'apagar, mas os bipes podem não tocar com a tela bloqueada.</div>';
+    }
+    document.getElementById("aviso").innerHTML = av;
+  }
+  if (fase === "rodando" || fase === "prep") {
+    document.getElementById("stats").innerHTML = '<div class="stats">' +
+      '<div class="stat"><div class="r">Repetições tocadas</div><div class="v">' + s.abdToques.length + '</div></div>' +
+      '<div class="stat"><div class="r">Índice</div><div class="v">' + (ARGS.meta || "—") + '</div></div>' +
+      '<div class="stat"><div class="r">Tempo</div><div class="v">' + fmt(abdDecorrido()) + '</div></div></div>';
+  } else document.getElementById("stats").innerHTML = "";
+  ajustarAltura();
+}
+
 function escolherAlvo(m) { ler(); s.alvo = (m > 0) ? m : 0; gravar(); desenhar(false); }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +535,7 @@ let ultimaEstrutura = "";
 function desenhar(forcar) {
   if (!s) return;
   if (ARGS.modo === "tiros") return desenharTiros(forcar);
+  if (ARGS.modo === "abdominal") return desenharAbd(forcar);
   const ms = total(), rodando = !!s.inicio, modoVoltas = ARGS.modo === "voltas";
   const nVoltas = s.voltas.length, ultV = nVoltas ? s.voltas[nVoltas - 1] : 0;
   const dist = nVoltas * (s.pista || 0);
@@ -451,7 +681,7 @@ window.addEventListener("message", ev => {
     if (confirmados.includes(s.pendente.id)) { s.pendente = null; gravar(); }
     else { enviar("streamlit:setComponentValue", { value: s.pendente, dataType: "json" }); }
   }
-  if (s.inicio || s.tiroIni) manterTelaAcesa(true);
+  if (s.inicio || s.tiroIni || s.abdFase === "prep" || s.abdFase === "rodando") manterTelaAcesa(true);
   desenhar(true);
 });
 
@@ -460,7 +690,7 @@ setInterval(() => { if (ARGS) { ler(); desenhar(false); } }, 250);
 document.addEventListener("visibilitychange", () => {
   if (!ARGS) return;
   ler();
-  if (document.visibilityState === "visible" && s.inicio) manterTelaAcesa(true);
+  if (document.visibilityState === "visible" && (s.inicio || s.abdFase === "rodando")) manterTelaAcesa(true);
   desenhar(true);
 });
 </script>

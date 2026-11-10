@@ -617,7 +617,7 @@ def plano_padrao():
                 "exercicios": [
                     {"nome": "Aquecimento e mobilidade", "series": 1, "reps": "8 min", "detalhes": "Caminhada leve e mobilidade de ombros, quadril e tornozelos", "tipo": "tempo"},
                     {"nome": "Remada australiana (barra baixa)", "series": 3, "reps": "6 a 10", "detalhes": "Corpo alinhado; pare 2 reps antes da falha", "tipo": "forca"},
-                    {"nome": "Abdominal (padrão do edital, sem cronômetro)", "series": 3, "reps": "10 a 15", "detalhes": "Cotovelos tocam a coxa, escápulas voltam ao solo", "tipo": "forca"},
+                    {"nome": "Abdominal (padrão do edital)", "series": 3, "reps": "10 a 15", "detalhes": "Cotovelos tocam a coxa, escápulas voltam ao solo", "tipo": "forca"},
                     {"nome": "Caminhada com trotes", "series": 1, "reps": "20 min", "detalhes": "1 min trote / 2 min caminhada", "tipo": "tempo"},
                 ],
             },
@@ -1531,6 +1531,9 @@ def preencher_formulario(ck, i, tipo, res, forcar):
     def setar(k, v):
         if forcar or k not in st.session_state:
             st.session_state[k] = v
+    if tipo == "forca" and res.get("reps_tentativas"):
+        setar(f"rs_{ck}_{i}", " ".join(str(x) for x in res["reps_tentativas"]))
+        return
     t = res.get("tempo_seg")
     if not t:
         return
@@ -1619,6 +1622,23 @@ def secao_simulado(sim, provas):
                             novo.update({"voltas_seg": r["voltas_seg"], "pista_m": r.get("pista_m"),
                                          "distancia_m": r.get("distancia_m")})
                         sim["resultados"][pid] = novo
+                    dados_usuario["simulado_andamento"] = sim
+                    salvar()
+                    st.session_state["toast"] = f"✅ {p['nome']}: resultado anotado."
+                    st.rerun()
+
+            # Cronômetro de 1 minuto do abdominal (10/11/2026)
+            if pid == "flexao_abdominal":
+                r = _cronometro_componente(
+                    chave=f"taf_sim_{usuario_input}_{sim.get('id')}_{pid}", modo="abdominal",
+                    titulo="⏱️ Abdominal – 1 minuto", usuario=usuario_input, duracao=60, meta=meta,
+                    confirmados=sim["ids"][-30:], key=f"simcomp_{sim.get('id')}_{pid}", default=None,
+                )
+                if isinstance(r, dict) and r.get("id") and r["id"] not in sim["ids"]:
+                    sim["ids"] = (sim["ids"] + [r["id"]])[-30:]
+                    if r.get("reps") is not None:
+                        sim["resultados"][pid] = {"tentativas": [int(r["reps"])], "valor": int(r["reps"])}
+                        st.session_state[f"simtxt_{sim.get('id')}_{pid}_0"] = str(int(r["reps"]))
                     dados_usuario["simulado_andamento"] = sim
                     salvar()
                     st.session_state["toast"] = f"✅ {p['nome']}: resultado anotado."
@@ -1815,8 +1835,22 @@ def campos_registro(ex, kp, ini=None, r_crono=None):
     return resp, erro
 
 
+def eh_abdominal(ex):
+    """Abdominal do edital (séries comuns ou o teste de 1 minuto), registrado em repetições."""
+    n = sem_acento(ex.get("nome", ""))
+    return (ex.get("prova_id") == "flexao_abdominal"
+            or ("abdominal" in n and "remador" not in n and tipo_registro(ex) == "forca"))
+
+
+def meta_abdominal():
+    p = next((x for x in list(provas_ativas) + PROVAS_CBMPE_2026 if x["id"] == "flexao_abdominal"), None)
+    return meta_para(p, sexo_usuario) if p else None
+
+
 def cronometro_do_exercicio(ck, i, ex, rasc):
     tipo = tipo_registro(ex)
+    if eh_abdominal(ex):
+        return cronometro_abdominal(ck, i, ex, rasc)
     modo = ("tiros" if eh_tiros(ex) else "voltas") if tipo == "corrida" else "simples"
     try:
         qtd = int(ex.get("series") or 0)
@@ -1851,6 +1885,39 @@ def cronometro_do_exercicio(ck, i, ex, rasc):
         st.caption("Tentativas de hoje: " + " · ".join(fmt_tempo(x) for x in r["tentativas_seg"])
                    + " — o formulário ficou com a última; ajuste se quiser outra.")
 
+
+
+def cronometro_abdominal(ck, i, ex, rasc):
+    """10/11/2026: cronômetro de 1 minuto do abdominal. Cada 'Registrar série' vira
+    uma série no campo 'Repetições de cada série'."""
+    res = _cronometro_componente(
+        chave=f"taf_crono_abd_{usuario_input}_{ck}_{i}",
+        modo="abdominal",
+        titulo="⏱️ Abdominal cronometrado",
+        usuario=usuario_input,
+        duracao=60,
+        meta=meta_abdominal(),
+        confirmados=rasc["ids"][-30:],
+        key=f"cronoabd_{ck}_{i}",
+        default=None,
+    )
+    if isinstance(res, dict) and res.get("id") and res["id"] not in rasc["ids"]:
+        rasc["ids"] = (rasc["ids"] + [res["id"]])[-30:]
+        if res.get("reps") is not None:
+            anterior = rasc["resultados"].get(str(i)) or {}
+            res["reps_tentativas"] = (anterior.get("reps_tentativas") or []) + [int(res["reps"])]
+            res["tempos_tentativas"] = (anterior.get("tempos_tentativas") or []) + [res.get("tempo_seg")]
+            rasc["resultados"][str(i)] = res
+            preencher_formulario(ck, i, "forca", res, forcar=True)
+        dados_usuario["rascunho_treino"] = rasc
+        salvar()
+        st.session_state["toast"] = "✅ Série do abdominal anotada no formulário abaixo."
+        st.rerun()
+    r = rasc["resultados"].get(str(i)) or {}
+    if r.get("reps_tentativas"):
+        partes = [f"{rp} em {fmt_tempo(tp)}" if tp else str(rp)
+                  for rp, tp in zip(r["reps_tentativas"], r.get("tempos_tentativas") or [None] * len(r["reps_tentativas"]))]
+        st.caption("Séries de hoje: " + " · ".join(partes) + " — já estão no campo de repetições abaixo.")
 
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -1944,7 +2011,11 @@ with tab1:
                 st.markdown(f"**{i + 1}. {ex['nome']}** — alvo: `{ex.get('series', 1)}x {ex.get('reps', '')}`{etiqueta}")
                 if ex.get("detalhes"):
                     st.caption(f"ℹ️ {ex['detalhes']}")
-                if tipo_registro(ex) in ("corrida", "cronometrado", "tempo", "isometria"):
+                if eh_abdominal(ex):
+                    ja = " ✅" if str(i) in rasc["resultados"] else ""
+                    with st.expander(f"⏱️ Cronômetro do abdominal – 1 minuto (cada Registrar = 1 série){ja}"):
+                        cronometro_do_exercicio(ck, i, ex, rasc)
+                elif tipo_registro(ex) in ("corrida", "cronometrado", "tempo", "isometria"):
                     ja = " ✅" if str(i) in rasc["resultados"] else ""
                     dica = " (cada Finalizar = 1 série)" if tipo_registro(ex) == "isometria" else ""
                     with st.expander(f"⏱️ Cronômetro deste exercício{dica}{ja}", expanded=ex.get("tipo") == "corrida"):
